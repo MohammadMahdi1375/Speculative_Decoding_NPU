@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.bak
+
+# Environments
+.env
+.venv/
+venv/
+
+# Logs & runs
+*.log
+logs/
+runs/
+wandb/
+
+# sgl-kernel-npu build artifacts
+sgl-kernel-npu/build/
+sgl-kernel-npu/output/
+
+# SpecForge — only exclude the heavy processed dataset
+SpecForge/cache/processed_dataset/
+SpecForge/logs/
+SpecForge/outputs/
+SpecForge/specforge.egg-info/

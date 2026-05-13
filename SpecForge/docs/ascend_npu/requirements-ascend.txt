@@ -1,0 +1,89 @@
+# Reproducible Ascend NPU install for SpecForge DFlash (HF backend only).
+#
+# Tested target:
+#   - SpecForge       @ d5fb617f735db85a680876327f8173de0cb57c15  (upstream main, 2026-05)
+#   - yunchang        @ 0.6.4 (PyPI; native NPU ring/hybrid CP since PR #169)
+#   - CANN            8.5+
+#   - Hardware        Atlas A2 / 910b / A3
+#
+# Usage:
+#   pip install -r requirements-ascend.txt
+#
+# Notes:
+#   - The --index-url below forces all packages (including torch / torchvision
+#     / torch_npu) to come from the Huawei Cloud PyPI mirror. The mirror is a
+#     full PyPI replica AND hosts the Ascend torch_npu wheels.
+#   - As of 2026-05 the latest NPU-supported torch pair is 2.9.0; SpecForge
+#     upstream's 2.9.1 is NOT yet supported by torch_npu.
+#   - sglang is NOT in this file. SpecForge's eagle3_target_model.py has a
+#     top-level `import sglang.srt.managers.mm_utils`, so sglang must be
+#     importable for any `import specforge` to work — even with HF backend
+#     at runtime. Install it via Step 4 of installation.md (clone upstream
+#     sgl-project/sglang, checkout tag v0.5.9, swap pyproject_npu.toml in,
+#     pip install -e). Don't put sglang here because the install needs a
+#     from-source build with a pyproject swap, not a wheel-pull.
+#   - flash-attn is NOT included. It has no NPU build; DFlash on NPU runs
+#     with --attention-backend sdpa.
+#   - yunchang is included as a dormant dependency. SpecForge imports it at
+#     module load time, but DFlash with default args (sp_*=1) does not
+#     exercise its sequence-parallel kernels.
+
+# ------ Index: force everything through the Huawei Cloud mirror ------
+--index-url https://mirrors.huaweicloud.com/repository/pypi/simple/
+--trusted-host mirrors.huaweicloud.com
+
+# ------ Core deep-learning runtime (NPU-friendly; do not bump without verifying torch_npu pair) ------
+torch==2.9.0
+torchvision==0.24.0
+torch_npu==2.9.0
+
+# ------ Sequence parallel (dormant on DFlash; native NPU support since 0.6.4) ------
+yunchang==0.6.4
+
+# ------ HF stack (pinned to match SpecForge upstream + yunchang's transformers pin) ------
+transformers==4.57.1
+qwen-vl-utils==0.0.11
+
+# ------ Data / training ------
+datasets==4.8.5
+accelerate==1.13.0
+safetensors==0.7.0
+einops==0.8.2
+
+# ------ Misc utilities ------
+numpy<2.0
+pydantic==2.13.3
+psutil
+tqdm
+ninja
+packaging
+setuptools<81  # torch_npu.dynamo.torchair still imports pkg_resources, removed in setuptools 81+
+
+# ------ CANN ABI compatibility ------
+# CANN 8.x ships Python helper packages (te, auto-tune, opc-tool,
+# asc-op-compile-base, schedule-search) that don't declare their PyPI deps
+# correctly. Without these you'll see noisy "X requires Y" warnings and
+# parts of the CANN toolkit fail at import.
+decorator
+cloudpickle
+ml-dtypes
+tornado
+scipy
+cffi
+pybind11
+sympy
+absl-py
+# protobuf 4.25.x works for both wandb (>4.21) and CANN 8.5+. If your CANN
+# strictly requires protobuf 3.20.x (older toolkits), pin "protobuf==3.20.3"
+# and switch tracking from --report-to wandb to --report-to tensorboard.
+protobuf>=4.25,<5
+
+# ------ Experiment tracking (pick one or both) ------
+wandb==0.26.1
+tensorboard==2.20.0
+
+# ------ Optional, used by some target-model configs (e.g. gpt-oss) ------
+openai-harmony==0.0.8
+
+# ------ Pre-commit (optional, only if you intend to develop) ------
+# pre-commit
