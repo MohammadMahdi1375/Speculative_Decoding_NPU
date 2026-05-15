@@ -205,6 +205,30 @@ pip show sglang | grep -E "Version|Editable"
 
 Any failure → see [Troubleshooting #6](#6-sglang-install-fails).
 
+#### 4e. Pin `setuptools<81` (do this immediately after sglang installs)
+
+sglang's build can silently upgrade `setuptools` past 81 as a transitive build
+dependency. `torch_npu.dynamo.torchair` still imports `pkg_resources`, which
+setuptools 81+ removed. The symptom only shows up later, at step 7's
+verification import, as:
+
+```
+ModuleNotFoundError: No module named 'pkg_resources'
+...
+torch_npu.dynamo._TorchairImportError
+```
+
+Catch it now, not later:
+
+```bash
+pip show setuptools | grep Version
+# If Version: 81.x or newer, downgrade:
+pip install "setuptools==80.9.0"
+```
+
+This is also covered in [Troubleshooting #3](#3-setuptools81-conflict) for
+reference, but pinning here saves a confusing debug round at step 7.
+
 ### Step 5 — Install NPU kernels (`sgl_kernel_npu` + `triton-ascend`)
 
 > sglang's import path touches `sgl_kernel_npu` (the NPU operator library),
@@ -338,14 +362,34 @@ Then re-run step 4 with `numpy` already pinned.
 
 ### 3. `setuptools<81` conflict
 
-Same idea — pin to a concrete version:
+**Symptoms** (any of these means setuptools is too new):
+
+- `pip` reports a resolver conflict on `setuptools` during step 3 or 4.
+- At step 7 verification, `import specforge` (or anything that imports
+  `torch_npu.dynamo.torchair`) crashes with:
+  ```
+  ModuleNotFoundError: No module named 'pkg_resources'
+  ...
+  torch_npu.dynamo._TorchairImportError
+  ```
+
+**Diagnose:**
+
+```bash
+pip show setuptools | grep Version
+# Version: 81.x or newer → that's the culprit
+```
+
+**Fix** — pin to a concrete pre-81 version:
 
 ```bash
 pip install "setuptools==80.9.0"
 ```
 
-`setuptools<81` is required because `torch_npu.dynamo.torchair` still imports
-`pkg_resources`, which setuptools 81+ removed.
+Why: `setuptools<81` is required because `torch_npu.dynamo.torchair` still
+imports `pkg_resources`, which setuptools 81+ removed. sglang's build deps
+can silently bump setuptools past this line — see step 4e for the
+post-install check that catches it before step 7.
 
 ### 4. yunchang accidentally pulls flash-attn
 
