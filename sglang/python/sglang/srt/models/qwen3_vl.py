@@ -1397,16 +1397,12 @@ class Qwen3VLForConditionalGeneration(nn.Module):
 
     def set_eagle3_layers_to_capture(self, layer_ids: Optional[List[int]] = None):
         self.capture_aux_hidden_states = True
-        self.model.capture_aux_hidden_states = True
         if layer_ids is None:
             num_layers = self.config.num_hidden_layers
-            self.model.layers_to_capture = [
-                2,
-                num_layers // 2,
-                num_layers - 3,
-            ]  # Specific layers for EAGLE3 support
+            capture_ids = [2, num_layers // 2, num_layers - 3]
         else:
-            self.model.layers_to_capture = [val + 1 for val in layer_ids]
+            capture_ids = list(layer_ids)
+        self.model.set_dflash_layers_to_capture(capture_ids)
 
 
 EntryClass = Qwen3VLForConditionalGeneration

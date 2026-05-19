@@ -2,10 +2,16 @@ import logging
 from typing import Optional, Union
 
 import torch
-from sgl_kernel_npu.mamba.mamba_state_update_triton import (
-    conv_state_rollback,
-    move_intermediate_cache,
-)
+try:
+    from sgl_kernel_npu.mamba.mamba_state_update_triton import (
+        conv_state_rollback,
+        move_intermediate_cache,
+    )
+except (ImportError, ModuleNotFoundError):
+    def conv_state_rollback(*args, **kwargs):
+        raise NotImplementedError("conv_state_rollback requires newer sgl_kernel_npu")
+    def move_intermediate_cache(*args, **kwargs):
+        raise NotImplementedError("move_intermediate_cache requires newer sgl_kernel_npu")
 
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.hybrid_linear_attn_backend import (
