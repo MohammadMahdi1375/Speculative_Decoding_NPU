@@ -263,40 +263,6 @@ class SGLangDFlashTargetModel(DFlashTargetModel):
         else:
             raise ValueError("SGLang output does not contain hidden states.")
 
-        ##### @Moh_7596 — V4 pre_hc_head has shape [T, num_mtp * hidden_size]
-        # because each input token produces hidden states for `num_mtp` future
-        # positions (Multi-Token Prediction). The draft model wants only the
-        # capture_layer_ids-indexed MTP segments. Slice them out here.
-        hidden_size = self.model_runner.model_config.hidden_size
-        if (
-            self.capture_layer_ids is not None
-            and hidden_states_list
-            and hidden_states_list[0].shape[-1] > hidden_size
-            and hidden_states_list[0].shape[-1] % hidden_size == 0
-        ):
-            num_segments = hidden_states_list[0].shape[-1] // hidden_size
-            if all(0 <= i < num_segments for i in self.capture_layer_ids):
-                if not getattr(self, "_v4_mtp_slice_warned", False):
-                    import logging as _log
-                    _log.getLogger(__name__).warning(
-                        f"[@Moh_7596] V4 hidden_states has "
-                        f"{num_segments} MTP segments \u00d7 {hidden_size} dim "
-                        f"= {hidden_states_list[0].shape[-1]} features. "
-                        f"Slicing to capture_layer_ids={self.capture_layer_ids}."
-                    )
-                    self._v4_mtp_slice_warned = True
-                sliced = []
-                for hs in hidden_states_list:
-                    chunks = [
-                        hs[..., i * hidden_size : (i + 1) * hidden_size]
-                        for i in self.capture_layer_ids
-                    ]
-                    sliced.append(torch.cat(chunks, dim=-1))
-                hidden_states_list = sliced
-        ################
-        else:
-            raise ValueError("SGLang output does not contain hidden states.")
-
         self.model_runner.req_to_token_pool.clear()
         self.model_runner.token_to_kv_pool_allocator.clear()
 

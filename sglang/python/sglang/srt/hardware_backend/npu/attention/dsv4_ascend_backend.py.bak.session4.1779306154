@@ -235,55 +235,28 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
     forward_metadata = None
 
     def init_forward_metadata_indexer(self, core_attn_metadata) -> None:
-        """Build per-batch indexer metadata for the Lightning Indexer.
-
-        Production: returns PagedIndexerMetadata(page_table + c4_seq_lens).
-        CUDA reference at deepseek_v4_backend.py:375.
-        Stub: returns None — PyTorch reference attention doesn't consume metadata.
-        """
-        return None
+        """Build per-batch indexer metadata for the Lightning Indexer."""
+        raise NotImplementedError(
+            "[V4 NPU Session 4] init_forward_metadata_indexer not yet implemented. "
+            "This is called by V4 model when CSA layer dispatches the Lightning "
+            "Indexer. Session 4 will port from deepseek_v4_backend.py:375."
+        )
 
     def forward_c4_indexer(self, *args, **kwargs):
-        """Lightning Indexer forward.
-
-        Production: computes sparse_indices via npu_lightning_indexer (q @ K^T +
-        topk over compressed KV) and writes indexer KV to pool. CUDA reference
-        at sglang/srt/layers/attention/dsv4/indexer.py.
-        Stub: silent no-op. PyTorch reference path reads the full (uncompressed)
-        kv passed to forward(), so the indexer's compressed K isn't needed.
-        """
-        if not getattr(self, "_indexer_warned", False):
-            logger.info(
-                "[V4 NPU Session 4] forward_c4_indexer: no-op (PyTorch reference path)"
-            )
-            self._indexer_warned = True
-        return None
+        """Lightning Indexer forward (computes sparse_indices for CSA attention)."""
+        raise NotImplementedError(
+            "[V4 NPU Session 4] forward_c4_indexer not yet implemented. "
+            "Needs npu_lightning_indexer + sparse_block_estimate from "
+            "sgl-kernel-npu attentions package."
+        )
 
     def forward_core_compressor(self, x, forward_batch, layer_id, compressor):
-        """KV compression for CSA (r=4) and HCA (r=128) paths.
-
-        Production: calls compressor(x, forward_batch) to get compressed KV,
-        then writes to token_to_kv_pool via set_extra_key_buffer (FP8 nope +
-        BF16 rope pack). CUDA reference at dsv4/compressor.py.
-        Stub: invoke compressor module so its weights are exercised, but discard
-        output. PyTorch reference attention uses uncompressed kv from forward()'s
-        args, not the compressed cache.
-        """
-        if not getattr(self, "_compressor_warned", False):
-            logger.info(
-                f"[V4 NPU Session 4] forward_core_compressor: layer_id={layer_id} "
-                f"ratio={getattr(compressor, 'ratio', '?')}, "
-                f"invoking compressor module (output discarded for PyTorch ref)"
-            )
-            self._compressor_warned = True
-        try:
-            _ = compressor(x, forward_batch)
-        except Exception as e:
-            logger.warning(
-                f"[V4 NPU Session 4] compressor module raised "
-                f"{type(e).__name__}: {e}; continuing"
-            )
-        return None
+        """KV compression for CSA (r=4) and HCA (r=128) paths."""
+        raise NotImplementedError(
+            "[V4 NPU Session 4] forward_core_compressor not yet implemented. "
+            "Needs npu_transpose_batchmatmul for compression. "
+            f"(called for layer_id={layer_id})"
+        )
 
     def _sliding_pytorch_reference(
         self, q: torch.Tensor, kv: torch.Tensor, qk_nope: int, qk_rope: int
@@ -344,63 +317,45 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
     def _forward_csa(
         self, q, k, layer, forward_batch, attn_sink
     ) -> torch.Tensor:
-        """Compressed Sparse Attention (compress_ratio=4). Used by Layer 1 in stub.
+        """Compressed Sparse Attention (sliding + top-K over c4). Layer 1 in stub.
 
-        Production (real V4, head_dim=512): two npu_sparse_flash_attention calls
-        (one over swa cache, one over c4 cache with Lightning-Indexer-derived
-        sparse_indices), then LSE merge. Real kernel path TODO.
-
-        Stub (head_dim != 512): delegate to PyTorch reference. Math is causal
-        dense attention over uncompressed kv — identical to sliding for our
-        random-weight smoke test.
+        Two-kernel approach (no unified NPU equivalent of FlashMLA's extra_k_cache):
+          (a) sliding_out = npu_sparse_flash_attention over swa cache (same as _forward_sliding)
+          (b) Lightning Indexer → top-K indices over c4 cache
+          (c) extra_out = npu_sparse_flash_attention over c4 cache with top-K indices
+          (d) merge sliding_out and extra_out via log-sum-exp combine (softmax-aware merge)
         """
-        kv = k  # MLA contract
-        qk_nope = self.qk_nope_head_dim
-        qk_rope = self.qk_rope_head_dim
-        head_dim = qk_nope + qk_rope
-
-        if head_dim != 512:
-            if not getattr(self, "_csa_ref_warned", False):
-                logger.warning(
-                    f"[V4 NPU Session 4] CSA head_dim={head_dim} != 512. "
-                    f"Using PyTorch reference (causal attention over kv)."
-                )
-                self._csa_ref_warned = True
-            return self._sliding_pytorch_reference(q, kv, qk_nope, qk_rope)
-
+        # TODO Session 4:
+        # See _forward_sliding for (a). For (b)+(c):
+        # topk_indices, _ = torch.ops.npu.npu_lightning_indexer(
+        #     query=q_indexer, key=index_k, weights=indexer_weights,
+        #     sparse_count=2048, sparse_mode=3,
+        #     actual_seq_lengths_query=..., actual_seq_lengths_key=...,
+        #     block_table=..., layout_query="TND", layout_key="PA_BSND",
+        # )
+        # extra_out = torch.ops.npu.npu_sparse_flash_attention(
+        #     query=q_nope, key=extra_k_cache, value=extra_k_cache,
+        #     sparse_indices=topk_indices, sparse_block_size=4, ...
+        # )
         raise NotImplementedError(
-            "[V4 NPU Session 4.kernel] CSA kernel path for real V4 (head_dim=512) "
-            "TODO. Plan: npu_lightning_indexer → sparse_indices, then two "
-            "npu_sparse_flash_attention calls + LSE merge."
+            "V4 CSA (sliding+top-K) on NPU — Session 4. "
+            "Plan: Lightning Indexer for top-K, then two sparse_flash calls + LSE merge."
         )
 
     def _forward_hca(
         self, q, k, layer, forward_batch, attn_sink
     ) -> torch.Tensor:
-        """Heavily Compressed Attention (compress_ratio=128). Used by Layer 2 in stub.
+        """Heavily Compressed Attention (sliding + dense over c128). Layer 2 in stub.
 
-        Production (real V4, head_dim=512): sliding + dense over c128 cache,
-        LSE merge. Real kernel path TODO (Session 5).
-
-        Stub (head_dim != 512): delegate to PyTorch reference.
+        Similar to CSA but no indexer — c128 cache is small enough for dense attention.
         """
-        kv = k
-        qk_nope = self.qk_nope_head_dim
-        qk_rope = self.qk_rope_head_dim
-        head_dim = qk_nope + qk_rope
-
-        if head_dim != 512:
-            if not getattr(self, "_hca_ref_warned", False):
-                logger.warning(
-                    f"[V4 NPU Session 4] HCA head_dim={head_dim} != 512. "
-                    f"Using PyTorch reference."
-                )
-                self._hca_ref_warned = True
-            return self._sliding_pytorch_reference(q, kv, qk_nope, qk_rope)
-
+        # TODO Session 5:
+        # (a) sliding_out — same as _forward_sliding
+        # (b) extra_out = npu_sparse_flash_attention over c128 cache with FULL indices
+        #     (sparse_block_size=128, sparse_indices = all c128 tokens)
+        # (c) merge via LSE
         raise NotImplementedError(
-            "[V4 NPU Session 5.kernel] HCA kernel path for real V4 TODO. "
-            "Plan: sliding + dense compressed attention + LSE merge."
+            "V4 HCA (sliding+dense compressed) on NPU — Session 5."
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -423,8 +378,36 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
             self._store_cache_warned = True
         return
 
+    def forward_core_compressor(self, *args, **kwargs):
+        """V4 KV compressor — produces compressed_k from raw k. Called from V4 model.
+
+        CUDA uses CompressorBackendMixin. We port using npu_transpose_batchmatmul.
+        """
+        # TODO Session 4
+        raise NotImplementedError(
+            "V4 compressor on NPU — Session 4. "
+            "Plan: use npu_transpose_batchmatmul for the compress projection."
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────────────────────────────
 
+    def _init_v4_state(self, layer) -> None:
+        """Lazy init of V4-specific scale/dims from layer config."""
+        # Common MLA scale: 1 / sqrt(qk_nope_head_dim + qk_rope_head_dim)
+        qk_nope = getattr(layer, "qk_nope_head_dim", None)
+        qk_rope = getattr(layer, "qk_rope_head_dim", None)
+        head_dim_v = getattr(layer, "v_head_dim", None)
+        if qk_nope is None or qk_rope is None or head_dim_v is None:
+            raise RuntimeError(
+                "Layer is missing V4-specific dims (qk_nope_head_dim, "
+                "qk_rope_head_dim, v_head_dim). Cannot init V4 backend state."
+            )
+        head_dim = qk_nope + qk_rope
+        self.softmax_scale = 1.0 / (head_dim ** 0.5)
+        self.head_dim_v = head_dim_v
+        logger.info(
+            f"V4 state initialized: qk_nope={qk_nope}, qk_rope={qk_rope}, "
+            f"v_head_dim={head_dim_v}, softmax_scale={self.softmax_scale:.6f}"
+        )
