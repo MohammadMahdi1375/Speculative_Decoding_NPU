@@ -985,9 +985,6 @@ class AscendAttnBackend(AttentionBackend):
         topk_indices: Optional[torch.Tensor] = None,
         sinks: Optional[torch.Tensor] = None,
         slopes: Optional[torch.Tensor] = None,
-        ##### @Moh_7596 — accept V4 extra kwargs (compress_ratio, etc.)
-        **_unused,
-        ################
     ):
         if is_mla_preprocess_enabled() and self.use_mla:
             # MLAPO and MLAPROLOG do save kv_cache
@@ -1740,9 +1737,6 @@ class AscendAttnBackend(AttentionBackend):
         q_rope: Optional[torch.Tensor] = None,
         k_rope: Optional[torch.Tensor] = None,
         sinks: Optional[torch.Tensor] = None,
-        ##### @Moh_7596 — accept V4 extra kwargs (compress_ratio, etc.)
-        **_unused,
-        ################
     ):
         if save_kv_cache:
             if self.use_mla:
@@ -1929,9 +1923,6 @@ class AscendAttnBackend(AttentionBackend):
         topk_indices: Optional[torch.Tensor] = None,
         sinks: Optional[torch.Tensor] = None,
         slopes: Optional[torch.Tensor] = None,
-        ##### @Moh_7596 — accept V4 extra kwargs (compress_ratio, etc.)
-        **_unused,
-        ################
     ):
         if is_mla_preprocess_enabled() and self.use_mla:
             # MLAPO does saving kv_cache

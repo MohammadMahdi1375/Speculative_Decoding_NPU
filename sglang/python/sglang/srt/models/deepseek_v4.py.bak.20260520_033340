@@ -418,13 +418,7 @@ class MQALayer(nn.Module):
             if qkv_a_ready is not None:
                 stream_kv.wait_event(qkv_a_ready)
             kv = self._compute_kv(x, positions, qkv_a=qkv_a)
-            ##### @Moh_7596 — guard store_cache (AscendAttnBackend lacks it).
-            # V4 has an optimization that pre-stores KV before attention via
-            # `store_cache`. The NPU backend doesn't implement this method;
-            # skipping is safe -- the normal cache write path still runs in
-            # forward_core.
-            if self.overlap_store_cache and hasattr(attn_backend, "store_cache"):
-            ################
+            if self.overlap_store_cache:
                 attn_backend.store_cache(
                     layer_id=self.layer_id,
                     swa_k=kv,
@@ -491,13 +485,7 @@ class MQALayer(nn.Module):
                 torch.cuda.current_stream(),
             )
 
-        ##### @Moh_7596 — guard store_cache (AscendAttnBackend lacks it).
-        # V4 has an optimization that pre-stores KV before attention via
-        # `store_cache`. The NPU backend doesn't implement this method;
-        # skipping is safe -- the normal cache write path still runs in
-        # forward_core.
-        if self.overlap_store_cache and hasattr(attn_backend, "store_cache"):
-        ################
+        if self.overlap_store_cache:
             attn_backend.store_cache(
                 layer_id=self.layer_id,
                 swa_k=kv,
@@ -1308,17 +1296,6 @@ class DeepseekV4ForCausalLM(nn.Module):
                             continue
                         if name not in params_dict and name.startswith("mtp"):
                             break
-                        ##### @Moh_7596 — skip unmapped stub weights instead of KeyError.
-                        # SGLang's V4 loader has graceful skips for experts/.bias/mtp* but
-                        # the catch-all path here raises on names that don't exist in the
-                        # constructed model (common with stub weights or fused-name mismatches).
-                        # Downgrade to warn+skip so smoke tests can run.
-                        if name not in params_dict:
-                            logger.warning(
-                                f"[@Moh_7596 stub] skipping unmapped weight {name}"
-                            )
-                            continue
-                        ################
                         param = params_dict[name]
                         weight_loader = param.weight_loader
                         maybe_executor_submit(
@@ -1340,17 +1317,6 @@ class DeepseekV4ForCausalLM(nn.Module):
                             name = name.replace(weight_name, param_name)
                             if name not in params_dict:
                                 continue
-                            ##### @Moh_7596 — skip unmapped stub weights instead of KeyError.
-                            # SGLang's V4 loader has graceful skips for experts/.bias/mtp* but
-                            # the catch-all path here raises on names that don't exist in the
-                            # constructed model (common with stub weights or fused-name mismatches).
-                            # Downgrade to warn+skip so smoke tests can run.
-                            if name not in params_dict:
-                                logger.warning(
-                                    f"[@Moh_7596 stub] skipping unmapped weight {name}"
-                                )
-                                continue
-                            ################
                             param = params_dict[name]
                             weight_loader = param.weight_loader
                             maybe_executor_submit(

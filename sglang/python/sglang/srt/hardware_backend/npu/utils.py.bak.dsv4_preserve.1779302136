@@ -46,15 +46,10 @@ def set_default_server_args(args: "ServerArgs"):
     Set default server arguments for NPU backend.
     """
 
-    ##### @Moh_7596 — attention backend from env var (single source of truth)
-    # SPECFORGE_ATTENTION_BACKEND is set by SpecForge's launch script.
-    # Falls back to "ascend" (original NPU behavior) when env var is unset.
-    import os as _os
-    _env_backend = _os.environ.get("SPECFORGE_ATTENTION_BACKEND", "ascend")
-    args.attention_backend = _env_backend
-    args.prefill_attention_backend = _env_backend
-    args.decode_attention_backend = _env_backend
-    ################
+    # NPU only works with "ascend" attention backend for now
+    args.attention_backend = "ascend"
+    args.prefill_attention_backend = "ascend"
+    args.decode_attention_backend = "ascend"
     if args.page_size is None:
         args.page_size = 128
 

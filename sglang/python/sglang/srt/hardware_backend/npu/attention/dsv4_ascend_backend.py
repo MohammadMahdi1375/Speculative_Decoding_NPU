@@ -54,15 +54,23 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
             )
         super().__init__(model_runner, *args, **kwargs)
 
-        # V4-specific scale (matches CUDA backend's softmax_scale)
-        # head_dim_v + qk_rope_head_dim is the "full" head dim for the scale.
-        # TODO Session 3: pull from layer config rather than hardcoding.
-        self.softmax_scale: Optional[float] = None  # set lazily in forward
-        self.head_dim_v: Optional[int] = None       # set lazily in forward
+        # Pull V4 dims from model_config (matches CUDA backend at
+        # deepseek_v4_backend.py lines 333-340). For our stub:
+        # head_dim=128 (nope=64 + rope=64), v_head_dim=64.
+        head_dim = model_runner.model_config.head_dim
+        self.head_dim = head_dim
+        self.head_dim_v = model_runner.model_config.v_head_dim
+        self.softmax_scale = float(head_dim) ** -0.5
+
+        # nope/rope split for V4's MLA architecture
+        hf_cfg = model_runner.model_config.hf_text_config
+        self.qk_rope_head_dim = getattr(hf_cfg, "qk_rope_head_dim", 64)
+        self.qk_nope_head_dim = head_dim - self.qk_rope_head_dim
 
         logger.info(
-            "DeepseekV4AscendAttnBackend initialized — V4-aware NPU attention "
-            "(uses npu_sparse_flash_attention + npu_lightning_indexer)."
+            f"DeepseekV4AscendAttnBackend initialized: head_dim={head_dim}, "
+            f"qk_nope={self.qk_nope_head_dim}, qk_rope={self.qk_rope_head_dim}, "
+            f"v_head_dim={self.head_dim_v}, scale={self.softmax_scale:.6f}"
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -84,10 +92,6 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
     ) -> torch.Tensor:
         # MLA contract: V4 passes the same tensor as k and v
         assert k is v, "DeepseekV4 shares k and v (MLA pattern)"
-
-        # Initialize lazy state from layer config on first call
-        if self.softmax_scale is None:
-            self._init_v4_state(layer)
 
         # Cache write (V4-aware: routes to right sub-pool by compress_ratio)
         if save_kv_cache:
@@ -111,33 +115,204 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
     def _forward_sliding(
         self, q, k, layer, forward_batch, attn_sink
     ) -> torch.Tensor:
-        """Sliding window attention over swa_kv_pool. Layers 0, 3 in stub.
+        """Sliding window attention via npu_sparse_flash_attention.
 
-        Maps to ONE npu_sparse_flash_attention call with sparse_indices spanning
-        the sliding window (constructed from swa_page_indices in metadata).
-
-        Reference call (from sfa_v1.py:916):
-            torch.ops.npu.npu_sparse_flash_attention(
-                query=q_nope, key=kv, value=kv,
-                sparse_indices=swa_indices, scale_value=self.softmax_scale,
-                sparse_block_size=1, block_table=...,
-                actual_seq_lengths_query=..., actual_seq_lengths_kv=...,
-                query_rope=q_pe, key_rope=k_pe,
-                layout_query="TND", layout_kv="PA_BSND",
-                sparse_mode=3,
-            )
+        Session 3: uses current-batch kv directly (cache reads = Session 4).
+        Pattern from vllm-ascend/sfa_v1.py:909.
         """
-        # TODO Session 3:
-        # 1. Read swa_k_cache via forward_batch.token_to_kv_pool.get_swa_key_buffer_radix(layer_id)
-        # 2. Split q into q_nope (qk_nope_head_dim) and q_rope (qk_rope_head_dim)
-        # 3. Get metadata: swa_page_indices, swa_topk_lengths from self.forward_metadata
-        # 4. Call npu_sparse_flash_attention
-        # 5. Apply attn_sink if provided (post-softmax stabilization)
+        kv = k  # V4 contract: k is v
+        qk_nope = self.qk_nope_head_dim
+        qk_rope = self.qk_rope_head_dim
+        expected_head = qk_nope + qk_rope
+
+        if not getattr(self, "_sliding_logged", False):
+            logger.info(
+                f"[V4 NPU Session 3] First sliding call: "
+                f"q.shape={tuple(q.shape)}, q.dtype={q.dtype}, "
+                f"kv.shape={tuple(kv.shape)}, kv.dtype={kv.dtype}, "
+                f"qk_nope={qk_nope}, qk_rope={qk_rope}, "
+                f"layer_id={layer.layer_id}, attn_sink={attn_sink is not None}"
+            )
+            self._sliding_logged = True
+
+        if q.shape[-1] != expected_head:
+            logger.warning(
+                f"[V4 NPU] q.shape[-1]={q.shape[-1]} != qk_nope+qk_rope={expected_head}; "
+                f"returning zeros."
+            )
+            return torch.zeros_like(q)
+
+        # @Moh_7596 — npu_sparse_flash_attention kernel HARDCODES qk_head_dim==512
+        # (real V4 MLA dims: nope=448, rope=64). Our stub has head_dim=128, which
+        # the kernel rejects. For stub configs use PyTorch reference; for real V4
+        # use the kernel.
+        if expected_head != 512:
+            if not getattr(self, "_pytorch_ref_warned", False):
+                logger.warning(
+                    f"[V4 NPU Session 3] head_dim={expected_head} != 512 "
+                    f"(kernel constraint). Using PyTorch reference attention."
+                )
+                self._pytorch_ref_warned = True
+            return self._sliding_pytorch_reference(q, kv, qk_nope, qk_rope)
+
+        try:
+            q_nope = q[..., :qk_nope].contiguous()
+            q_rope = q[..., qk_nope:].contiguous()
+            k_nope = kv[..., :qk_nope].contiguous()
+            k_rope = kv[..., qk_nope:].contiguous()
+
+            # @Moh_7596 — V4 passes kv as (T, D) (kv-head dim collapsed because
+            # MLA uses num_kv_heads=1). The kernel needs (T, N_kv, D) for TND
+            # layout. Unsqueeze to add a kv-head dim.
+            if k_nope.ndim == 2:
+                k_nope = k_nope.unsqueeze(1)  # (T, 1, D_nope)
+                k_rope = k_rope.unsqueeze(1)  # (T, 1, D_rope)
+            v_tensor = k_nope  # MLA: V head dim == nope dim
+
+            T_q = q_nope.shape[0] if q_nope.ndim >= 1 else 1
+            T_kv = k_nope.shape[0] if k_nope.ndim >= 1 else 1
+
+            sparse_indices = (
+                torch.arange(T_kv, device=q.device, dtype=torch.int32)
+                .unsqueeze(0)
+                .expand(T_q, T_kv)
+                .contiguous()
+            )
+            actual_seq_q = torch.tensor([T_q], device=q.device, dtype=torch.int32)
+            actual_seq_kv = torch.tensor([T_kv], device=q.device, dtype=torch.int32)
+
+            # @Moh_7596 — attention_mode=1 selects MLA path which allows
+            # separate query_rope/key_rope. Default 0 is MHA/GQA which requires
+            # rope to be baked into q/k tensors.
+            out_tup = torch.ops.npu.npu_sparse_flash_attention(
+                query=q_nope,
+                key=k_nope,
+                value=v_tensor,
+                sparse_indices=sparse_indices,
+                scale_value=self.softmax_scale,
+                sparse_block_size=1,
+                actual_seq_lengths_query=actual_seq_q,
+                actual_seq_lengths_kv=actual_seq_kv,
+                query_rope=q_rope,
+                key_rope=k_rope,
+                layout_query="TND",
+                layout_kv="TND",
+                sparse_mode=3,
+                attention_mode=2,
+            )
+            out = out_tup[0] if isinstance(out_tup, tuple) else out_tup
+
+            if out.shape[-1] == qk_nope:
+                zero_rope = torch.zeros(
+                    *out.shape[:-1], qk_rope, device=out.device, dtype=out.dtype
+                )
+                out = torch.cat([out, zero_rope], dim=-1)
+
+            if not getattr(self, "_sliding_succeeded", False):
+                logger.info(
+                    f"[V4 NPU Session 3] OK sliding attention: out.shape={tuple(out.shape)}"
+                )
+                self._sliding_succeeded = True
+
+            return out
+
+        except Exception as e:
+            logger.error(
+                f"[V4 NPU Session 3] sliding kernel call failed: "
+                f"{type(e).__name__}: {e}"
+            )
+            return torch.zeros_like(q)
+
+
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Session 4 boundary: methods called by V4 model that need real impl.
+    # Each raises a clear NotImplementedError so the failure mode is obvious.
+    # ─────────────────────────────────────────────────────────────────────
+
+    # Backend attribute V4 model reads at deepseek_v4.py:1037.
+    # Session 4 will populate this from init_forward_metadata().
+    forward_metadata = None
+
+    def init_forward_metadata_indexer(self, core_attn_metadata) -> None:
+        """Build per-batch indexer metadata for the Lightning Indexer."""
         raise NotImplementedError(
-            "V4 sliding attention on NPU — Session 3. "
-            "Plan: split q to nope/rope, fetch swa cache, build window indices, "
-            "call npu_sparse_flash_attention(layout_query='TND', layout_kv='PA_BSND')."
+            "[V4 NPU Session 4] init_forward_metadata_indexer not yet implemented. "
+            "This is called by V4 model when CSA layer dispatches the Lightning "
+            "Indexer. Session 4 will port from deepseek_v4_backend.py:375."
         )
+
+    def forward_c4_indexer(self, *args, **kwargs):
+        """Lightning Indexer forward (computes sparse_indices for CSA attention)."""
+        raise NotImplementedError(
+            "[V4 NPU Session 4] forward_c4_indexer not yet implemented. "
+            "Needs npu_lightning_indexer + sparse_block_estimate from "
+            "sgl-kernel-npu attentions package."
+        )
+
+    def forward_core_compressor(self, x, forward_batch, layer_id, compressor):
+        """KV compression for CSA (r=4) and HCA (r=128) paths."""
+        raise NotImplementedError(
+            "[V4 NPU Session 4] forward_core_compressor not yet implemented. "
+            "Needs npu_transpose_batchmatmul for compression. "
+            f"(called for layer_id={layer_id})"
+        )
+
+    def _sliding_pytorch_reference(
+        self, q: torch.Tensor, kv: torch.Tensor, qk_nope: int, qk_rope: int
+    ) -> torch.Tensor:
+        """Pure PyTorch reference for sliding window MLA attention.
+
+        Used for stub configs (head_dim != 512) where npu_sparse_flash_attention
+        won't accept the shapes. Smoke-test grade — produces correct-shape output
+        with proper MLA + causal attention math, just slow (no fused kernel).
+
+        Inputs:
+          q:  (T_q, N_q, D) where D = qk_nope + qk_rope
+          kv: (T_kv, D)     MLA: single kv head, shared across all q heads
+        Output:
+          (T_q, N_q, D)  — out[..., qk_nope:] is zero (V has no rope component)
+        """
+        T_q, N_q, D = q.shape
+        T_kv = kv.shape[0]
+
+        # All math in fp32 for stability (we're already slow)
+        q_f = q.float()
+        kv_f = kv.float()
+
+        # Attention scores: q · k^T scaled. q is per-head, kv is shared.
+        # q: (T_q, N_q, D) -> (N_q, T_q, D); kv: (T_kv, D) -> (1, D, T_kv) (broadcast)
+        q_perm = q_f.permute(1, 0, 2)           # (N_q, T_q, D)
+        k_t = kv_f.unsqueeze(0).transpose(-1, -2)  # (1, D, T_kv)
+        scores = torch.matmul(q_perm, k_t) * self.softmax_scale  # (N_q, T_q, T_kv)
+
+        # Causal mask (each query can only attend to keys at <= its position)
+        causal = torch.triu(
+            torch.ones(T_q, T_kv, dtype=torch.bool, device=q.device), diagonal=1
+        )
+        scores = scores.masked_fill(causal, float("-inf"))
+
+        weights = torch.softmax(scores, dim=-1)  # (N_q, T_q, T_kv)
+
+        # MLA: V is the nope part of kv only (rope dim has no value content)
+        v = kv_f[..., :qk_nope].unsqueeze(0)  # (1, T_kv, qk_nope)
+        out_nope = torch.matmul(weights, v)   # (N_q, T_q, qk_nope)
+        out_nope = out_nope.permute(1, 0, 2).contiguous()  # (T_q, N_q, qk_nope)
+
+        # Pad rope dims with zeros — V doesn't carry rope info
+        zero_rope = torch.zeros(
+            T_q, N_q, qk_rope, dtype=out_nope.dtype, device=out_nope.device
+        )
+        out_full = torch.cat([out_nope, zero_rope], dim=-1)  # (T_q, N_q, D)
+
+        if not getattr(self, "_ref_succeeded", False):
+            logger.info(
+                f"[V4 NPU Session 3] OK PyTorch reference sliding: "
+                f"out.shape={tuple(out_full.shape)}"
+            )
+            self._ref_succeeded = True
+
+        return out_full.to(q.dtype)
 
     def _forward_csa(
         self, q, k, layer, forward_batch, attn_sink
@@ -190,17 +365,18 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
     def store_cache(
         self, layer_id: int, swa_k: torch.Tensor, forward_batch: "ForwardBatch"
     ) -> None:
-        """Write KV to the V4 paged pool. Routes by compress_ratio."""
-        # TODO Session 3:
-        # The V4 pool exposes set_swa_key_buffer / set_extra_key_buffer.
-        # We need to dispatch by compress_ratio.
-        # For sliding layers: token_to_kv_pool.set_swa_key_buffer(layer_id, loc, packed_k)
-        # For CSA/HCA: token_to_kv_pool.set_extra_key_buffer(layer_id, loc, packed_k)
-        # The "packed_k" comes from the V4 compressor — already FP8 nope + BF16 rope.
-        raise NotImplementedError(
-            "V4 store_cache on NPU — Session 3. "
-            "Plan: dispatch to V4 pool's set_swa_key_buffer / set_extra_key_buffer by compress_ratio."
-        )
+        """Write KV to V4 paged pool.
+
+        Session 3: no-op for smoke testing. Real packing+writing TODO in
+        Session 4 (needs FP8 nope quant + BF16 rope pack).
+        """
+        if not getattr(self, "_store_cache_warned", False):
+            logger.warning(
+                "[V4 NPU Session 3] store_cache is a no-op for smoke testing. "
+                "Real packing+writing TODO in Session 4."
+            )
+            self._store_cache_warned = True
+        return
 
     def forward_core_compressor(self, *args, **kwargs):
         """V4 KV compressor — produces compressed_k from raw k. Called from V4 model.

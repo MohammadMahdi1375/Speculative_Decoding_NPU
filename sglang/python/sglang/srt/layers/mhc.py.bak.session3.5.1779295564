@@ -789,47 +789,14 @@ if _os.path.isfile(_TLA_HC_FILE):
         scale_f32 = hc_scale.to(torch.float32) if hc_scale.dtype != torch.float32 else hc_scale
         base_f32 = hc_base.to(torch.float32) if hc_base.dtype != torch.float32 else hc_base
 
-        ##### @Moh_7596 — env-var-gated tilelang call with PyTorch fallback
-        # Tilelang-ascend's hc_split_sinkhorn uses symbolic dim n which
-        # currently fails to bind at runtime ('Unfounded symbolic var: n').
-        # SGLANG_OPT_USE_TILELANG_MHC_PRE=False forces the PyTorch path;
-        # otherwise we try tilelang and fall back to PyTorch on any error.
-        import os as _os
-        _v = _os.environ.get("SGLANG_OPT_USE_TILELANG_MHC_PRE", "True").lower()
-        _use_tla = _v not in ("false", "0", "no")
-        if _use_tla:
-            try:
-                outs = kernel(mixes_2d, scale_f32, base_f32)
-                pre, post, comb = outs[0], outs[1], outs[2]
-                return (
-                    pre.reshape(b, s, hc_mult),
-                    post.reshape(b, s, hc_mult),
-                    comb.reshape(b, s, hc_mult, hc_mult),
-                )
-            except Exception as _e:
-                import warnings as _w
-                _w.warn(
-                    f"[@Moh_7596] tilelang mHC kernel failed ({type(_e).__name__}: {_e}); "
-                    f"falling back to PyTorch."
-                )
-        # PyTorch Sinkhorn fallback (smoke-test grade: returns shape-correct,
-        # mathematically valid outputs but not necessarily bit-identical to
-        # the tilelang kernel)
-        pre_raw = mixes_2d[..., :hc_mult]
-        post_raw = mixes_2d[..., hc_mult:2 * hc_mult]
-        comb_raw = mixes_2d[..., 2 * hc_mult:].reshape(-1, hc_mult, hc_mult)
-        pre = torch.softmax(pre_raw, dim=-1)
-        post = torch.softmax(post_raw, dim=-1)
-        comb = torch.softmax(comb_raw, dim=-1)
-        for _ in range(sinkhorn_iters):
-            comb = comb / (comb.sum(dim=-2, keepdim=True).clamp_min(eps))
-            comb = comb / (comb.sum(dim=-1, keepdim=True).clamp_min(eps))
+        outs = kernel(mixes_2d, scale_f32, base_f32)
+        # kernel returns list[pre, post, comb]; pack to tuple to match orig contract
+        pre, post, comb = outs[0], outs[1], outs[2]
         return (
-            pre.reshape(b, s, hc_mult).to(mixes.dtype),
-            post.reshape(b, s, hc_mult).to(mixes.dtype),
-            comb.reshape(b, s, hc_mult, hc_mult).to(mixes.dtype),
+            pre.reshape(b, s, hc_mult),
+            post.reshape(b, s, hc_mult),
+            comb.reshape(b, s, hc_mult, hc_mult),
         )
-        ################
 else:
     # If the tilelang-ascend examples dir isn't reachable for any reason, leave
     # the original (CUDA-only) hc_split_sinkhorn defined above in place. It will

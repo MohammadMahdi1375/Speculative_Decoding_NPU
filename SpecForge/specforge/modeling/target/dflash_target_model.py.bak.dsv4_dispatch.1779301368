@@ -113,20 +113,7 @@ class SGLangDFlashTargetModel(DFlashTargetModel):
         # ------------------------------------------------------------------
         if _TORCH_NPU_AVAILABLE:
             kwargs.setdefault("device", "npu")
-            ##### @Moh_7596 — attention backend from env var (single source of truth)
-            # Set SPECFORGE_ATTENTION_BACKEND in the launch script.
-            # See SpecForge/docs/ascend_npu/run_deepseek_v4_flash_dflash_sglang_npu.sh
-            _env_backend = os.environ.get("SPECFORGE_ATTENTION_BACKEND")
-            if _env_backend:
-                kwargs["attention_backend"] = _env_backend
-                print(
-                    f"[@Moh_7596] attention_backend={_env_backend!r} "
-                    f"(from SPECFORGE_ATTENTION_BACKEND)",
-                    flush=True,
-                )
-            else:
-                kwargs.setdefault("attention_backend", "ascend")
-            ################
+            kwargs.setdefault("attention_backend", "ascend")
             # SGLang NPU recipes typically run without the radix cache for
             # the kind of one-shot forwards we do here (training data prep).
             kwargs.setdefault("disable_radix_cache", True)

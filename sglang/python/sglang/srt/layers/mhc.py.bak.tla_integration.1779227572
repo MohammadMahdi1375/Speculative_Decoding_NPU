@@ -17,20 +17,6 @@ try:
     import tilelang
     import tilelang.language as T
     tilelang.set_log_level("WARNING")
-
-    # @Moh_7596 — wrap PassConfigKey so missing CUDA-only keys return None
-    # instead of raising AttributeError. SGLang's mhc.py has @tilelang.jit
-    # decorated kernels with pass_configs referencing TL_PTXAS_REGISTER_USAGE_LEVEL
-    # and other CUDA-only keys that tilelang-ascend doesn't expose. We never
-    # *call* those kernels (env vars disable them; our hc_split_sinkhorn
-    # override below uses tilelang-ascend's example kernel instead), but the
-    # decorators are evaluated at module load and would crash without this.
-    _real_PassConfigKey = tilelang.PassConfigKey
-    class _SafePassConfigKey:
-        def __getattr__(self, name):
-            return getattr(_real_PassConfigKey, name, None)
-    tilelang.PassConfigKey = _SafePassConfigKey()
-
     pass_configs = {
         tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
         tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
@@ -710,51 +696,13 @@ def mhc_post(
     return out
 
 
-##### @Moh_7596 — tilelang-ascend V4 mHC kernel integration.
-# Override hc_split_sinkhorn with a wrapper around tilelang-ascend's Ascend-native
-# example kernel. SGLang's own @tilelang.jit kernel above uses CUDA-only pass
-# configs and won't generate working AscendC code. The tilelang-ascend example
-# kernel uses TL_ASCEND_* pass configs and produces bit-correct Sinkhorn output
-# on Ascend NPU.
-import os as _os
-
-_TLA_EXAMPLES_DIR = _os.environ.get(
-    "TILELANG_ASCEND_EXAMPLES_DIR",
-    "/home/n84449292/m84379596/DFlash/Specforge_NPU/tilelang-ascend-src/examples/deepseek_v4",
-)
-_TLA_HC_FILE = _os.path.join(_TLA_EXAMPLES_DIR, "hc_split_sinkhorn.py")
-
-if _os.path.isfile(_TLA_HC_FILE):
-    import importlib.util as _imp
-    _spec = _imp.spec_from_file_location("_tla_ascend_hc_split_sinkhorn", _TLA_HC_FILE)
-    _hcs_mod = _imp.module_from_spec(_spec)
-
-    # @Moh_7596 — the example file has dangerous module-level side effects:
-    #   - torch.set_default_device("npu"): would make later torch.empty(...)
-    #     allocate on NPU, breaking SGLang's weight loader (triggers AscendC
-    #     op compilation that needs `cce.product_init`).
-    #   - torch.manual_seed(42): would clobber the user's random state.
-    #   - tilelang.disable_cache(): would disable kernel cache globally.
-    # Neutralize these during the example file's exec, then restore.
-    import torch as _torch
-    import tilelang as _tla
-    _saved_set_default = _torch.set_default_device
-    _saved_manual_seed = _torch.manual_seed
-    _saved_disable_cache = _tla.disable_cache
-    _torch.set_default_device = lambda *a, **k: None
-    _torch.manual_seed = lambda *a, **k: None
-    _tla.disable_cache = lambda *a, **k: None
-    try:
-        _spec.loader.exec_module(_hcs_mod)
-    finally:
-        _torch.set_default_device = _saved_set_default
-        _torch.manual_seed = _saved_manual_seed
-        _tla.disable_cache = _saved_disable_cache
-
-    _hc_kernel_factory = _hcs_mod.hc_split_sinkhorn
-
-    _hc_kernel_cache: dict = {}
-
+##### @Moh_7596 — PyTorch fallback for hc_split_sinkhorn (NPU smoke-test).
+# When tilelang isn't available, override hc_split_sinkhorn with a PyTorch
+# implementation that mirrors the kernel's math. Not bit-exact with the
+# tilelang version, but produces sensibly-shaped outputs so the V4 forward
+# pass completes end-to-end. For production accuracy on NPU you'd want
+# either tilelang-ascend (with V4 kernels) or an AscendC equivalent.
+if not _HAVE_TILELANG:
     def hc_split_sinkhorn(
         mixes: torch.Tensor,
         hc_scale: torch.Tensor,
@@ -763,83 +711,33 @@ if _os.path.isfile(_TLA_HC_FILE):
         sinkhorn_iters: int = 20,
         eps: float = 1e-6,
     ):
-        """tilelang-ascend V4 mHC kernel. Overrides SGLang's CUDA-only kernel
-        above. Caches compiled kernels per (hc_mult, sinkhorn_iters, eps).
+        """Pure-PyTorch fallback. See the @tilelang.jit version above for the
+        reference kernel; this mirrors its arithmetic in plain torch ops."""
+        b, s, mix_hc = mixes.size()
+        # mix_hc must equal (2 + hc_mult) * hc_mult
+        # Layout in last dim: [pre_logits (hc_mult), post_logits (hc_mult),
+        #                      comb_logits (hc_mult * hc_mult)]
+        flat = mixes.reshape(b * s, mix_hc)
+        base = hc_base.reshape(-1)
+        h = hc_mult
 
-        Input  mixes: (b, s, (2+hc_mult)*hc_mult), float32 or bf16 (cast to f32).
-        Output (pre, post, comb):
-          pre:  (b, s, hc_mult)
-          post: (b, s, hc_mult)
-          comb: (b, s, hc_mult, hc_mult)  -- sinkhorn-normalized, rows/cols sum to 1.
-        """
-        key = (hc_mult, sinkhorn_iters, eps)
-        kernel = _hc_kernel_cache.get(key)
-        if kernel is None:
-            kernel = _hc_kernel_factory(hc_mult, sinkhorn_iters, eps)
-            _hc_kernel_cache[key] = kernel
+        pre_logits = flat[:, 0:h] * hc_scale[0] + base[0:h]
+        pre = torch.sigmoid(pre_logits) + eps  # (b*s, h)
 
-        b, s, _ = mixes.shape
-        mix_hc = (2 + hc_mult) * hc_mult
-        mixes_2d = mixes.reshape(b * s, mix_hc)
-        if mixes_2d.dtype != torch.float32:
-            mixes_2d = mixes_2d.to(torch.float32)
-        if mixes_2d.device.type == "npu" and not mixes_2d.is_contiguous():
-            mixes_2d = mixes_2d.contiguous()
+        post_logits = flat[:, h:2 * h] * hc_scale[1] + base[h:2 * h]
+        post = 2.0 * torch.sigmoid(post_logits)  # (b*s, h)
 
-        scale_f32 = hc_scale.to(torch.float32) if hc_scale.dtype != torch.float32 else hc_scale
-        base_f32 = hc_base.to(torch.float32) if hc_base.dtype != torch.float32 else hc_base
-
-        ##### @Moh_7596 — env-var-gated tilelang call with PyTorch fallback
-        # Tilelang-ascend's hc_split_sinkhorn uses symbolic dim n which
-        # currently fails to bind at runtime ('Unfounded symbolic var: n').
-        # SGLANG_OPT_USE_TILELANG_MHC_PRE=False forces the PyTorch path;
-        # otherwise we try tilelang and fall back to PyTorch on any error.
-        import os as _os
-        _v = _os.environ.get("SGLANG_OPT_USE_TILELANG_MHC_PRE", "True").lower()
-        _use_tla = _v not in ("false", "0", "no")
-        if _use_tla:
-            try:
-                outs = kernel(mixes_2d, scale_f32, base_f32)
-                pre, post, comb = outs[0], outs[1], outs[2]
-                return (
-                    pre.reshape(b, s, hc_mult),
-                    post.reshape(b, s, hc_mult),
-                    comb.reshape(b, s, hc_mult, hc_mult),
-                )
-            except Exception as _e:
-                import warnings as _w
-                _w.warn(
-                    f"[@Moh_7596] tilelang mHC kernel failed ({type(_e).__name__}: {_e}); "
-                    f"falling back to PyTorch."
-                )
-        # PyTorch Sinkhorn fallback (smoke-test grade: returns shape-correct,
-        # mathematically valid outputs but not necessarily bit-identical to
-        # the tilelang kernel)
-        pre_raw = mixes_2d[..., :hc_mult]
-        post_raw = mixes_2d[..., hc_mult:2 * hc_mult]
-        comb_raw = mixes_2d[..., 2 * hc_mult:].reshape(-1, hc_mult, hc_mult)
-        pre = torch.softmax(pre_raw, dim=-1)
-        post = torch.softmax(post_raw, dim=-1)
-        comb = torch.softmax(comb_raw, dim=-1)
+        comb_logits = flat[:, 2 * h:] * hc_scale[2] + base[2 * h:]
+        comb = comb_logits.reshape(b * s, h, h)
+        # Sinkhorn-Knopp: exp then iterate row/col normalization.
+        comb = comb.exp()
         for _ in range(sinkhorn_iters):
-            comb = comb / (comb.sum(dim=-2, keepdim=True).clamp_min(eps))
-            comb = comb / (comb.sum(dim=-1, keepdim=True).clamp_min(eps))
+            comb = comb / (comb.sum(dim=-1, keepdim=True) + eps)
+            comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
+
         return (
-            pre.reshape(b, s, hc_mult).to(mixes.dtype),
-            post.reshape(b, s, hc_mult).to(mixes.dtype),
-            comb.reshape(b, s, hc_mult, hc_mult).to(mixes.dtype),
+            pre.reshape(b, s, h),
+            post.reshape(b, s, h),
+            comb.reshape(b, s, h, h),
         )
-        ################
-else:
-    # If the tilelang-ascend examples dir isn't reachable for any reason, leave
-    # the original (CUDA-only) hc_split_sinkhorn defined above in place. It will
-    # fail at first call -- which is the right loud signal: "you need
-    # tilelang-ascend's examples reachable to run V4 on NPU."
-    import warnings as _w
-    _w.warn(
-        f"[@Moh_7596] TILELANG_ASCEND_EXAMPLES_DIR not found: {_TLA_EXAMPLES_DIR}. "
-        "hc_split_sinkhorn will use SGLang's CUDA-only kernel and likely fail at "
-        "first call. Set TILELANG_ASCEND_EXAMPLES_DIR env var to the deepseek_v4 "
-        "examples directory inside your tilelang-ascend source checkout."
-    )
 ################

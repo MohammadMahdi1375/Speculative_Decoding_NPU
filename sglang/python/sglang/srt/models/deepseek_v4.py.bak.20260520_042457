@@ -418,13 +418,7 @@ class MQALayer(nn.Module):
             if qkv_a_ready is not None:
                 stream_kv.wait_event(qkv_a_ready)
             kv = self._compute_kv(x, positions, qkv_a=qkv_a)
-            ##### @Moh_7596 — guard store_cache (AscendAttnBackend lacks it).
-            # V4 has an optimization that pre-stores KV before attention via
-            # `store_cache`. The NPU backend doesn't implement this method;
-            # skipping is safe -- the normal cache write path still runs in
-            # forward_core.
-            if self.overlap_store_cache and hasattr(attn_backend, "store_cache"):
-            ################
+            if self.overlap_store_cache:
                 attn_backend.store_cache(
                     layer_id=self.layer_id,
                     swa_k=kv,
@@ -491,13 +485,7 @@ class MQALayer(nn.Module):
                 torch.cuda.current_stream(),
             )
 
-        ##### @Moh_7596 — guard store_cache (AscendAttnBackend lacks it).
-        # V4 has an optimization that pre-stores KV before attention via
-        # `store_cache`. The NPU backend doesn't implement this method;
-        # skipping is safe -- the normal cache write path still runs in
-        # forward_core.
-        if self.overlap_store_cache and hasattr(attn_backend, "store_cache"):
-        ################
+        if self.overlap_store_cache:
             attn_backend.store_cache(
                 layer_id=self.layer_id,
                 swa_k=kv,

@@ -2,37 +2,17 @@ import math
 from functools import lru_cache
 from typing import Optional
 
+import tilelang
 import torch
+import triton
+import triton.language as tl
 
-##### @Moh_7596 — lazy imports so this module loads on Ascend NPU.
-try:
-    import torch_npu  # noqa: F401
-    _IS_NPU = True
-except ImportError:
-    _IS_NPU = False
+tilelang.set_log_level("WARNING")
 
-try:
-    import triton
-    import triton.language as tl
-    _HAVE_TRITON = True
-except ImportError:
-    triton = None
-    tl = None
-    _HAVE_TRITON = False
-
-try:
-    import tilelang
-    tilelang.set_log_level("WARNING")
-    pass_configs = {
-        tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
-        tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
-    }
-    _HAVE_TILELANG = True
-except (ImportError, AttributeError):
-    tilelang = None
-    pass_configs = {}
-    _HAVE_TILELANG = False
-################
+pass_configs = {
+    tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
+    tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
+}
 
 FP8 = "float8_e4m3"
 BF16 = "bfloat16"

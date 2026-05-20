@@ -113,19 +113,42 @@ class SGLangDFlashTargetModel(DFlashTargetModel):
         # ------------------------------------------------------------------
         if _TORCH_NPU_AVAILABLE:
             kwargs.setdefault("device", "npu")
-            ##### @Moh_7596 — attention backend from env var (single source of truth)
-            # Set SPECFORGE_ATTENTION_BACKEND in the launch script.
-            # See SpecForge/docs/ascend_npu/run_deepseek_v4_flash_dflash_sglang_npu.sh
-            _env_backend = os.environ.get("SPECFORGE_ATTENTION_BACKEND")
-            if _env_backend:
-                kwargs["attention_backend"] = _env_backend
-                print(
-                    f"[@Moh_7596] attention_backend={_env_backend!r} "
-                    f"(from SPECFORGE_ATTENTION_BACKEND)",
-                    flush=True,
+            ##### @Moh_7596 — pick attention_backend by model architecture.
+            # Previously hardcoded "ascend", which overrode SGLang's V4 hook
+            # and caused V4 models to use the generic AscendAttnBackend
+            # (whose forward_extend calls V4-pool's get_key_buffer →
+            # NotImplementedError). Sniff arch from config; use "dsv4"
+            # for V4 so our DeepseekV4AscendAttnBackend is registered.
+            _default_attn_backend = "ascend"
+            try:
+                from transformers import AutoConfig as _AutoConfig
+                _cfg = _AutoConfig.from_pretrained(
+                    pretrained_model_name_or_path,
+                    trust_remote_code=trust_remote_code,
                 )
+                _arches = getattr(_cfg, "architectures", []) or []
+                if any("DeepseekV4" in a for a in _arches):
+                    _default_attn_backend = "dsv4"
+            except Exception as _e:
+                import warnings as _w
+                _w.warn(
+                    f"[@Moh_7596] arch sniff for attention_backend default failed: "
+                    f"{type(_e).__name__}: {_e}; using ascend"
+                )
+            # @Moh_7596 — upstream passes attention_backend='flashinfer'
+            # (CUDA default) which then gets translated to 'ascend' on NPU.
+            # We need to FORCE-override for V4 because 'ascend' uses the
+            # generic AscendAttnBackend whose forward_extend fails on V4 pool.
+            _current = kwargs.get("attention_backend")
+            print(f"[@Moh_7596] arch={_arches}, current_kwarg={_current!r}, sniffed_default={_default_attn_backend!r}", flush=True)
+            if _default_attn_backend == "dsv4":
+                # V4 model: ALWAYS force dsv4 (overrides flashinfer/ascend)
+                if _current != "dsv4":
+                    print(f"[@Moh_7596] forcing attention_backend dsv4 (was {_current!r})", flush=True)
+                    kwargs["attention_backend"] = "dsv4"
             else:
-                kwargs.setdefault("attention_backend", "ascend")
+                kwargs.setdefault("attention_backend", _default_attn_backend)
+            print(f"[@Moh_7596] final kwargs[attention_backend]={kwargs.get('attention_backend')!r}", flush=True)
             ################
             # SGLang NPU recipes typically run without the radix cache for
             # the kind of one-shot forwards we do here (training data prep).

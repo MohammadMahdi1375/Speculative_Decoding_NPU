@@ -578,23 +578,6 @@ def fused_rope(
     positions: torch.Tensor,
     inverse: bool = False,
 ) -> None:
-    ##### @Moh_7596 — NPU fallback for fused_rope.
-    # The CUDA JIT path below needs CUDA_HOME to compile; on Ascend NPU
-    # we route to apply_rotary_emb_triton (a @triton.jit kernel that runs
-    # under triton-ascend). Same in-place semantics on q and k.
-    try:
-        import torch_npu  # noqa: F401
-        _IS_NPU = True
-    except ImportError:
-        _IS_NPU = False
-
-    if _IS_NPU:
-        from sglang.srt.layers.deepseek_v4_rope import apply_rotary_emb_triton
-        apply_rotary_emb_triton(q, freqs_cis, positions=positions, inverse=inverse)
-        if k is not None:
-            apply_rotary_emb_triton(k, freqs_cis, positions=positions, inverse=inverse)
-        return
-    ################
     freqs_real = torch.view_as_real(freqs_cis).flatten(-2).contiguous()
     module = _jit_fused_rope_module()
     module.forward(q, k, freqs_real, positions, inverse)
@@ -912,12 +895,6 @@ def linear_bf16_fp32(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 def _dispatch_bf16_fp32_backend(
     x: torch.Tensor, y: torch.Tensor, *, algo: str
 ) -> torch.Tensor:
-    ##### @Moh_7596 — On NPU, force PyTorch fallback regardless of algo.
-    # The "cublas" path JIT-compiles a CUDA extension (needs CUDA_HOME);
-    # "deep_gemm" needs CUDA too. PyTorch fallback is the only option on NPU.
-    if x.is_npu or y.is_npu or (hasattr(x.device, "type") and x.device.type == "npu"):
-        return torch.nn.functional.linear(x.float(), y.float())
-    ################
     if algo == "cublas":
         module = _jit_torch_cublas_bf16_fp32()
         return module.linear_bf16_fp32(x, y)
