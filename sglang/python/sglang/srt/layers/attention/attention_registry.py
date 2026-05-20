@@ -94,6 +94,25 @@ def create_nsa_backend(runner):
 
 @register_attention_backend("dsv4")
 def create_dsv4_backend(runner):
+    ##### @Moh_7596 — NPU dispatch for V4.
+    # When running on Ascend NPU, use our V4 NPU backend (sgl-kernel-npu kernels).
+    # Falls through to CUDA on other devices.
+    try:
+        import torch_npu  # noqa: F401
+        _has_npu = torch_npu.npu.is_available()
+    except Exception:
+        _has_npu = False
+
+    if _has_npu:
+        from sglang.srt.hardware_backend.npu.attention.dsv4_ascend_backend import (
+            DeepseekV4AscendAttnBackend,
+        )
+        logger.info(
+            "Using DeepseekV4AscendAttnBackend for dsv4 attention backend (NPU)."
+        )
+        return DeepseekV4AscendAttnBackend(runner)
+    ################
+
     from sglang.srt.layers.attention.deepseek_v4_backend import (
         DeepseekV4AttnBackend,
     )
