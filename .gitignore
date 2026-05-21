@@ -37,3 +37,10 @@ SpecForge/cache/processed_dataset/
 SpecForge/logs/
 SpecForge/outputs/
 SpecForge/specforge.egg-info/
+
+# V4 NPU port — stub safetensors are regenerable (codehub blocks >50 MB files)
+# Regenerate via:
+#   python SpecForge/scripts/prepare_dsv4_stub_target.py \
+#       --output-dir ./SpecForge/stubs/DeepSeek-V4-Flash-Stub-SGLang \
+#       --save-stub-weights
+SpecForge/stubs/
