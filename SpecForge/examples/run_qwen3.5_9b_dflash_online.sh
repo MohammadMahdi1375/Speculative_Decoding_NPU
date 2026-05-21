@@ -95,7 +95,7 @@ DRAFT_CONFIG=${DRAFT_CONFIG:-$ROOT_DIR/configs/qwen3.5-9b-dflash.json}
 #   "mat1 and mat2 shapes cannot be multiplied (N x 3584 and 17920 x 3584)"
 # We set QWEN3_5_DFLASH_PATCH so train_dflash.py can import & apply it
 # before instantiating the sglang engine.
-QWEN3_5_PATCH=${QWEN3_5_PATCH:-$ROOT_DIR/patches/qwen3_5_patch.py}
+QWEN3_5_PATCH=${QWEN3_5_PATCH:-$(dirname "$SCRIPT_DIR")/patches/qwen3_5_patch.py}
 if [[ -f "$QWEN3_5_PATCH" ]]; then
     echo "INFO: Qwen3.5 DFlash patch found at $QWEN3_5_PATCH"
     # Make patch importable — add its parent dir to PYTHONPATH

@@ -5,8 +5,8 @@
 # (registered under torch.ops.npu.* after `import attentions`).
 #
 # Status: skeleton — methods raise NotImplementedError with clear session markers.
-# Reference: docs/dsv4_npu_port/refs/cuda_forward_method.py (CUDA oracle)
-#            docs/dsv4_npu_port/refs/vllm_ascend_attention/sfa_v1.py (NPU patterns)
+# Reference: SpecForge/docs/dsv4_npu_port/refs/cuda_forward_method.py (CUDA oracle)
+#            SpecForge/docs/dsv4_npu_port/refs/vllm_ascend_attention/sfa_v1.py (NPU patterns)
 ################
 from __future__ import annotations
 

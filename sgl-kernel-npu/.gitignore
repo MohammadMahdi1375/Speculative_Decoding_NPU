@@ -51,3 +51,6 @@ output/
 
 # debug information files
 *.dwo
+
+# embedded git repo for tilelang-ascend (kernel build-time dep)
+third_party/tilelang-ascend-src/

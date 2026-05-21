@@ -720,7 +720,7 @@ import os as _os
 
 _TLA_EXAMPLES_DIR = _os.environ.get(
     "TILELANG_ASCEND_EXAMPLES_DIR",
-    "/home/n84449292/m84379596/DFlash/Specforge_NPU/tilelang-ascend-src/examples/deepseek_v4",
+    "/home/n84449292/m84379596/DFlash/Specforge_NPU/sgl-kernel-npu/third_party/tilelang-ascend-src/examples/deepseek_v4",
 )
 _TLA_HC_FILE = _os.path.join(_TLA_EXAMPLES_DIR, "hc_split_sinkhorn.py")
 
