@@ -165,7 +165,26 @@ class MQALayer(nn.Module):
         self.n_heads = config.num_attention_heads
         self.n_local_heads = self.n_heads // attn_tp_size
         self.n_groups = config.o_groups
-        self.n_local_groups = self.n_groups // attn_tp_size
+        # ----- Sub-group TP support (handles attn_tp_size > n_groups) -----
+        if attn_tp_size <= self.n_groups:
+            assert self.n_groups % attn_tp_size == 0,                 f"n_groups ({self.n_groups}) must be divisible by attn_tp_size ({attn_tp_size})"
+            self.n_local_groups = self.n_groups // attn_tp_size
+            self.intra_group_tp_size = 1
+            self.intra_group_pg = None
+        else:
+            assert attn_tp_size % self.n_groups == 0,                 f"attn_tp_size ({attn_tp_size}) must be a multiple of n_groups ({self.n_groups})"
+            self.n_local_groups = 1
+            self.intra_group_tp_size = attn_tp_size // self.n_groups
+            import torch.distributed as _dist
+            _intra_idx = attn_tp_rank // self.intra_group_tp_size
+            self.intra_group_pg = None
+            for _gi in range(self.n_groups):
+                _members = list(range(_gi * self.intra_group_tp_size,
+                                      (_gi + 1) * self.intra_group_tp_size))
+                _sub_pg = _dist.new_group(ranks=_members)
+                if _gi == _intra_idx:
+                    self.intra_group_pg = _sub_pg
+        # ----- end sub-group TP setup -----
         self.rope_head_dim = config.qk_rope_head_dim
         self.softmax_scale = self.head_dim**-0.5
         self.hidden_size = config.hidden_size
@@ -577,6 +596,12 @@ class MQALayer(nn.Module):
             inverse=True,
         )
 
+        # Sub-group TP: gather across intra-group so each rank holds its full group
+        if self.intra_group_pg is not None:
+            _gathered = [torch.empty_like(o) for _ in range(self.intra_group_tp_size)]
+            torch.distributed.all_gather(_gathered, o.contiguous(), group=self.intra_group_pg)
+            o = torch.cat(_gathered, dim=1)
+
         o = o.view(o.shape[0], self.n_local_groups, -1)
 
         if _FP8_WO_A_GEMM:
@@ -598,7 +623,8 @@ class MQALayer(nn.Module):
             )
             o = output
         else:
-            wo_a = self.wo_a.weight.view(self.n_local_groups, self.o_lora_rank, -1)
+            _o_lora_rank_per_rank = self.o_lora_rank // self.intra_group_tp_size
+            wo_a = self.wo_a.weight.view(self.n_local_groups, _o_lora_rank_per_rank, -1)
             o = torch.einsum("tgd,grd->tgr", o, wo_a)
 
         o, _ = self.wo_b(o.flatten(1))
