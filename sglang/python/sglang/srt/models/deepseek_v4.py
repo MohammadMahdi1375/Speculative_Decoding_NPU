@@ -30,24 +30,22 @@ from sglang.srt.layers.deepseek_v4_rope import apply_rotary_emb_triton
 # @Moh_7596 - q-stage NaN probe tracker (each stage fires once per process)
 _Q_STAGE_LOGGED = set()
 def _log_q_stage(name, t):
-    import logging as _logging
+    import sys, os
     if name in _Q_STAGE_LOGGED:
         return
     _Q_STAGE_LOGGED.add(name)
+    rank = os.environ.get("RANK", "?")
     try:
         has_nan = bool(t.isnan().any().item())
         has_inf = bool(t.isinf().any().item())
-        if has_nan or has_inf:
-            _logging.getLogger(__name__).warning(
-                f"[@Moh_7596 Q_STAGE {name}] shape={tuple(t.shape)} NaN={has_nan} Inf={has_inf} <-- BAD"
-            )
-        else:
-            _logging.getLogger(__name__).warning(
-                f"[@Moh_7596 Q_STAGE {name}] shape={tuple(t.shape)} clean "
-                f"range=({t.float().min().item():.4f},{t.float().max().item():.4f})"
-            )
+        msg = f"[@Moh_7596 Q_STAGE rank={rank} {name}] shape={tuple(t.shape)} NaN={has_nan} Inf={has_inf}"
+        if not (has_nan or has_inf):
+            msg += f" range=({t.float().min().item():.4f},{t.float().max().item():.4f})"
+        sys.stderr.write(msg + "\n")
+        sys.stderr.flush()
     except Exception as e:
-        _logging.getLogger(__name__).warning(f"[@Moh_7596 Q_STAGE {name} probe error] {e}")
+        sys.stderr.write(f"[@Moh_7596 Q_STAGE {name} probe error] {e}\n")
+        sys.stderr.flush()
 
 from sglang.srt.layers.dp_attention import (
     _DpGatheredBufferWrapper,
