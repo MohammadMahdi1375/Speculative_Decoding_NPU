@@ -522,14 +522,70 @@ class MQALayer(nn.Module):
         else:
             kv, _ = self.wkv(x)
             q, _ = self.wq_a(x)
+        import sys as _sys_fp
+        if "FP_STAGE_1_after_wq_a" not in globals():
+            globals()["FP_STAGE_1_after_wq_a"] = True
+            try:
+                _nan = bool(q.isnan().any().item())
+                _inf = bool(q.isinf().any().item())
+                _msg = f"[@Moh_7596 FP_STAGE 1_after_wq_a] q.shape={tuple(q.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({q.float().min().item():.4f},{q.float().max().item():.4f})"
+                _sys_fp.stderr.write(_msg + "\n")
+                _sys_fp.stderr.flush()
+            except Exception as _ee:
+                _sys_fp.stderr.write(f"[@Moh_7596 FP_STAGE 1_after_wq_a err] {_ee}\n")
+                _sys_fp.stderr.flush()
         q = self.q_norm(q)
+        import sys as _sys_fp
+        if "FP_STAGE_2_after_q_norm" not in globals():
+            globals()["FP_STAGE_2_after_q_norm"] = True
+            try:
+                _nan = bool(q.isnan().any().item())
+                _inf = bool(q.isinf().any().item())
+                _msg = f"[@Moh_7596 FP_STAGE 2_after_q_norm] q.shape={tuple(q.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({q.float().min().item():.4f},{q.float().max().item():.4f})"
+                _sys_fp.stderr.write(_msg + "\n")
+                _sys_fp.stderr.flush()
+            except Exception as _ee:
+                _sys_fp.stderr.write(f"[@Moh_7596 FP_STAGE 2_after_q_norm err] {_ee}\n")
+                _sys_fp.stderr.flush()
         q_lora = q
         q, _ = self.wq_b(q)
+        import sys as _sys_fp
+        if "FP_STAGE_3_after_wq_b" not in globals():
+            globals()["FP_STAGE_3_after_wq_b"] = True
+            try:
+                _nan = bool(q.isnan().any().item())
+                _inf = bool(q.isinf().any().item())
+                _msg = f"[@Moh_7596 FP_STAGE 3_after_wq_b] q.shape={tuple(q.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({q.float().min().item():.4f},{q.float().max().item():.4f})"
+                _sys_fp.stderr.write(_msg + "\n")
+                _sys_fp.stderr.flush()
+            except Exception as _ee:
+                _sys_fp.stderr.write(f"[@Moh_7596 FP_STAGE 3_after_wq_b err] {_ee}\n")
+                _sys_fp.stderr.flush()
         q = q.view(-1, self.n_local_heads, self.head_dim)
         if self.use_jit_norm:
             q = rmsnorm_self(q, self.eps)
         else:
             q = rms_normalize_triton(q, self.eps)
+        import sys as _sys_fp
+        if "FP_STAGE_4_after_rmsnorm" not in globals():
+            globals()["FP_STAGE_4_after_rmsnorm"] = True
+            try:
+                _nan = bool(q.isnan().any().item())
+                _inf = bool(q.isinf().any().item())
+                _msg = f"[@Moh_7596 FP_STAGE 4_after_rmsnorm] q.shape={tuple(q.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({q.float().min().item():.4f},{q.float().max().item():.4f})"
+                _sys_fp.stderr.write(_msg + "\n")
+                _sys_fp.stderr.flush()
+            except Exception as _ee:
+                _sys_fp.stderr.write(f"[@Moh_7596 FP_STAGE 4_after_rmsnorm err] {_ee}\n")
+                _sys_fp.stderr.flush()
 
         kv = self.kv_norm(kv)
 
@@ -539,6 +595,20 @@ class MQALayer(nn.Module):
             self.freqs_cis,
             positions=positions,
         )
+        import sys as _sys_fp
+        if "FP_STAGE_5_after_fused_rope" not in globals():
+            globals()["FP_STAGE_5_after_fused_rope"] = True
+            try:
+                _nan = bool(q.isnan().any().item())
+                _inf = bool(q.isinf().any().item())
+                _msg = f"[@Moh_7596 FP_STAGE 5_after_fused_rope] q.shape={tuple(q.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({q.float().min().item():.4f},{q.float().max().item():.4f})"
+                _sys_fp.stderr.write(_msg + "\n")
+                _sys_fp.stderr.flush()
+            except Exception as _ee:
+                _sys_fp.stderr.write(f"[@Moh_7596 FP_STAGE 5_after_fused_rope err] {_ee}\n")
+                _sys_fp.stderr.flush()
 
         if self.nsa_enable_prefill_cp and nsa_use_prefill_cp(forward_batch):
             kv = cp_all_gather_rerange_output(
