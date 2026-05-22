@@ -905,6 +905,26 @@ class DeepseekV4DecoderLayer(nn.Module):
         hc_scale: torch.Tensor,
         hc_base: torch.Tensor,
     ):
+        import sys as _sys_hc
+        if "HC_PRE_PARAM_CHECK" not in globals():
+            globals()["HC_PRE_PARAM_CHECK"] = True
+            try:
+                _fn_nan = bool(hc_fn.isnan().any().item())
+                _scale_nan = bool(hc_scale.isnan().any().item())
+                _base_nan = bool(hc_base.isnan().any().item())
+                _x_nan = bool(x.isnan().any().item())
+                _msg = (f"[@Moh_7596 HC_PRE param check] "
+                        f"hc_fn.shape={tuple(hc_fn.shape)} hc_fn_nan={_fn_nan} "
+                        f"hc_scale_nan={_scale_nan} hc_base_nan={_base_nan} x_nan={_x_nan}")
+                if not _fn_nan:
+                    _msg += f" hc_fn_range=({hc_fn.float().min().item():.4f},{hc_fn.float().max().item():.4f})"
+                if not _x_nan:
+                    _msg += f" x_range=({x.float().min().item():.4f},{x.float().max().item():.4f})"
+                _sys_hc.stderr.write(_msg + "\n")
+                _sys_hc.stderr.flush()
+            except Exception as _e:
+                _sys_hc.stderr.write(f"[@Moh_7596 HC_PRE param check err] {_e}\n")
+                _sys_hc.stderr.flush()
         @compile_in_capture_mode
         def hc_pre_torch_impl(x, hc_fn):
             x_flat = x.flatten(1).float()
