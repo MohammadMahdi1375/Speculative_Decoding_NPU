@@ -332,6 +332,22 @@ class SGLangDFlashTargetModel(DFlashTargetModel):
             reqs.append(req)
 
         hidden_states_list = self._extend(reqs)
+        # @Moh_7596 — NaN probe
+        if hidden_states_list:
+            _h0 = hidden_states_list[0]
+            _has_nan = bool(_h0.isnan().any().item())
+            _has_inf = bool(_h0.isinf().any().item())
+            if _has_nan or _has_inf or not getattr(self, "_nan_logged", False):
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    f"[@Moh_7596 NaN probe] target hidden_states[0]: "
+                    f"shape={tuple(_h0.shape)}, dtype={_h0.dtype}, "
+                    f"has_nan={_has_nan}, has_inf={_has_inf}, "
+                    f"min={_h0.min().item() if not _has_nan else 'nan'}, "
+                    f"max={_h0.max().item() if not _has_nan else 'nan'}, "
+                    f"mean={_h0.float().mean().item() if not _has_nan else 'nan'}"
+                )
+                self._nan_logged = True
 
         # Stack back to batch
         hidden_states = torch.cat([h.unsqueeze(0) for h in hidden_states_list], dim=0)
