@@ -89,6 +89,12 @@ if TYPE_CHECKING:
 
 
 @triton.jit
+# @Moh_7596 — module-level cache for sub-group TP process groups.
+# Without this, each of 43 layers creates n_groups (8) HCCL communicators,
+# eating GB of HCCL internal buffers and OOMing on cross-node allgather.
+_INTRA_GROUP_PG_CACHE = {}
+
+
 def _rms_normalize_kernel(
     x_ptr,
     weight_ptr,
@@ -175,15 +181,22 @@ class MQALayer(nn.Module):
             assert attn_tp_size % self.n_groups == 0,                 f"attn_tp_size ({attn_tp_size}) must be a multiple of n_groups ({self.n_groups})"
             self.n_local_groups = 1
             self.intra_group_tp_size = attn_tp_size // self.n_groups
-            import torch.distributed as _dist
-            _intra_idx = attn_tp_rank // self.intra_group_tp_size
-            self.intra_group_pg = None
-            for _gi in range(self.n_groups):
-                _members = list(range(_gi * self.intra_group_tp_size,
-                                      (_gi + 1) * self.intra_group_tp_size))
-                _sub_pg = _dist.new_group(ranks=_members)
-                if _gi == _intra_idx:
-                    self.intra_group_pg = _sub_pg
+            # @Moh_7596 — cache sub-groups module-globally; without this we'd
+            # create n_groups × n_layers HCCL communicators (and OOM).
+            global _INTRA_GROUP_PG_CACHE
+            _cache_key = (attn_tp_size, self.n_groups)
+            if _cache_key not in _INTRA_GROUP_PG_CACHE:
+                import torch.distributed as _dist
+                _intra_idx = attn_tp_rank // self.intra_group_tp_size
+                _local_pg = None
+                for _gi in range(self.n_groups):
+                    _members = list(range(_gi * self.intra_group_tp_size,
+                                          (_gi + 1) * self.intra_group_tp_size))
+                    _sub_pg = _dist.new_group(ranks=_members)
+                    if _gi == _intra_idx:
+                        _local_pg = _sub_pg
+                _INTRA_GROUP_PG_CACHE[_cache_key] = _local_pg
+            self.intra_group_pg = _INTRA_GROUP_PG_CACHE[_cache_key]
         # ----- end sub-group TP setup -----
         self.rope_head_dim = config.qk_rope_head_dim
         self.softmax_scale = self.head_dim**-0.5
