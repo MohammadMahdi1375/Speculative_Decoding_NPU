@@ -695,7 +695,37 @@ class MQALayer(nn.Module):
             attn_sink=self.attn_sink,
             save_kv_cache=not self.overlap_store_cache,
         )
+        import sys as _sys_pa
+        if "POST_ATTN_1_before_slice_all_heads" not in globals():
+            globals()["POST_ATTN_1_before_slice_all_heads"] = True
+            try:
+                _t = o
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 POST_ATTN 1_before_slice_all_heads] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_pa.stderr.write(_msg + "\n")
+                _sys_pa.stderr.flush()
+            except Exception as _ee:
+                _sys_pa.stderr.write(f"[@Moh_7596 POST_ATTN 1_before_slice_all_heads err] {_ee}\n")
+                _sys_pa.stderr.flush()
         o = o[:, tp_slice, :]
+        import sys as _sys_pa
+        if "POST_ATTN_2_after_slice" not in globals():
+            globals()["POST_ATTN_2_after_slice"] = True
+            try:
+                _t = o
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 POST_ATTN 2_after_slice] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_pa.stderr.write(_msg + "\n")
+                _sys_pa.stderr.flush()
+            except Exception as _ee:
+                _sys_pa.stderr.write(f"[@Moh_7596 POST_ATTN 2_after_slice err] {_ee}\n")
+                _sys_pa.stderr.flush()
         fused_rope(
             o[..., -self.qk_rope_head_dim :],
             None,
@@ -703,12 +733,42 @@ class MQALayer(nn.Module):
             positions=positions,
             inverse=True,
         )
+        import sys as _sys_pa
+        if "POST_ATTN_3_after_inverse_rope" not in globals():
+            globals()["POST_ATTN_3_after_inverse_rope"] = True
+            try:
+                _t = o
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 POST_ATTN 3_after_inverse_rope] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_pa.stderr.write(_msg + "\n")
+                _sys_pa.stderr.flush()
+            except Exception as _ee:
+                _sys_pa.stderr.write(f"[@Moh_7596 POST_ATTN 3_after_inverse_rope err] {_ee}\n")
+                _sys_pa.stderr.flush()
 
         # Sub-group TP: gather across intra-group so each rank holds its full group
         if self.intra_group_pg is not None:
             _gathered = [torch.empty_like(o) for _ in range(self.intra_group_tp_size)]
             torch.distributed.all_gather(_gathered, o.contiguous(), group=self.intra_group_pg)
             o = torch.cat(_gathered, dim=1)
+        import sys as _sys_pa
+        if "POST_ATTN_4_after_cat" not in globals():
+            globals()["POST_ATTN_4_after_cat"] = True
+            try:
+                _t = o
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 POST_ATTN 4_after_cat] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_pa.stderr.write(_msg + "\n")
+                _sys_pa.stderr.flush()
+            except Exception as _ee:
+                _sys_pa.stderr.write(f"[@Moh_7596 POST_ATTN 4_after_cat err] {_ee}\n")
+                _sys_pa.stderr.flush()
 
         o = o.view(o.shape[0], self.n_local_groups, -1)
 
