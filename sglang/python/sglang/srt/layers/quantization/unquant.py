@@ -619,6 +619,15 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
         num_experts = layer.num_experts
         top_k = layer.top_k or topk_ids.shape[1]  # in case layer.top_k is not set
 
+        # @Moh_7596 — EP support: restrict routing to this rank's local experts.
+        # With EP=8, num_experts=256 globally but each rank holds only 32.
+        # npu_grouped_matmul requires group_list size == local weight dim 0.
+        ep_size = getattr(layer, "moe_ep_size", 1)
+        ep_rank = getattr(layer, "moe_ep_rank", 0)
+        num_local_experts = getattr(layer, "num_local_experts", num_experts // ep_size)
+        local_expert_start = ep_rank * num_local_experts
+        local_expert_end = local_expert_start + num_local_experts
+
         hidden_states, expanded_row_idx, expert_tokens, _ = (
             torch.ops.npu.npu_moe_init_routing_v2(
                 x,
@@ -627,11 +636,14 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
                 expert_num=num_experts,
                 expert_tokens_num_type=1,
                 expert_tokens_num_flag=True,
-                active_expert_range=[0, num_experts],
+                active_expert_range=[local_expert_start, local_expert_end],
                 quant_mode=-1,
             )
         )
         expert_tokens = expert_tokens.to(torch.int64)
+        # Defensive slice: if kernel returns full-size tensor, take local range
+        if expert_tokens.numel() > num_local_experts:
+            expert_tokens = expert_tokens[local_expert_start:local_expert_end].contiguous()
         w13_bias = [layer.w13_weight_bias] if self.with_bias else None
         w2_bias = [layer.w2_weight_bias] if self.with_bias else None
 
