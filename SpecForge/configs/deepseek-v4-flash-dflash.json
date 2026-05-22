@@ -18,7 +18,7 @@
   "tie_word_embeddings": false,
   "torch_dtype": "bfloat16",
   "num_hidden_layers": 1,
-  "num_target_layers": 4,
+  "num_target_layers": 43,
   "block_size": 16,
   "layer_types": [
     "full_attention"
