@@ -671,7 +671,7 @@ class MQALayer(nn.Module):
 
         tp_slice, q_padded, q_out = slice(None), None, None
         if self.tp_size > 1:
-            q_padded = x.new_empty(x.shape[0], self.n_heads, self.head_dim)
+            q_padded = x.new_zeros(x.shape[0], self.n_heads, self.head_dim)  # @Moh_7596: zero garbage heads so PyTorch ref attention doesn't see NaN
             rank = self.tp_rank
             tp_slice = slice(rank * self.n_local_heads, (rank + 1) * self.n_local_heads)
             q_out = q_padded[:, tp_slice, :]
