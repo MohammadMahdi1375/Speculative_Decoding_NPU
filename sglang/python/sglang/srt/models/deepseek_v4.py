@@ -89,12 +89,6 @@ if TYPE_CHECKING:
 
 
 @triton.jit
-# @Moh_7596 — module-level cache for sub-group TP process groups.
-# Without this, each of 43 layers creates n_groups (8) HCCL communicators,
-# eating GB of HCCL internal buffers and OOMing on cross-node allgather.
-_INTRA_GROUP_PG_CACHE = {}
-
-
 def _rms_normalize_kernel(
     x_ptr,
     weight_ptr,
