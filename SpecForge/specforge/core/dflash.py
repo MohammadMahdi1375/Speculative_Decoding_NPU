@@ -120,7 +120,7 @@ class OnlineDFlashModel(nn.Module):
             _lm_head_in = target_lm_head.weight.shape[1]
         _draft_out = draft_model.config.hidden_size
         if _lm_head_in is not None and _lm_head_in != _draft_out:
-            self.output_proj = nn.Linear(_draft_out, _lm_head_in, bias=False)
+            self.output_proj = nn.Linear(_draft_out, _lm_head_in, bias=False, dtype=torch.bfloat16)
         else:
             self.output_proj = None
         self.block_size = block_size

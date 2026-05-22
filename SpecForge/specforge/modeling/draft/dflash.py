@@ -240,13 +240,13 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
             config, "target_feat_dim",
             len(self.target_layer_ids) * config.hidden_size,
         )
-        self.fc = nn.Linear(_target_feat_dim, config.hidden_size, bias=False)
+        self.fc = nn.Linear(_target_feat_dim, config.hidden_size, bias=False, dtype=torch.bfloat16)
 
         # @Moh_7596 — Project incoming noise_embedding (from target.embed_tokens)
         # down to draft hidden_size when cross-arch. None if same.
         _noise_embed_dim = getattr(config, "noise_embed_dim", config.hidden_size)
         if _noise_embed_dim != config.hidden_size:
-            self.embed_proj = nn.Linear(_noise_embed_dim, config.hidden_size, bias=False)
+            self.embed_proj = nn.Linear(_noise_embed_dim, config.hidden_size, bias=False, dtype=torch.bfloat16)
         else:
             self.embed_proj = None
         self.hidden_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
