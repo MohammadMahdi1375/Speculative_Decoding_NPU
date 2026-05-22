@@ -120,6 +120,7 @@ torchrun \
     --target-model-backend sglang \
     --trust-remote-code \
     --tp-size "$TP_SIZE" \
+    --sglang-ep-size "${SPECFORGE_SGLANG_EP_SIZE:-1}" \
     --seed "$SEED" \
     --sglang-mem-fraction-static "$SGLANG_MEM_FRACTION_STATIC" \
     --draft-config-path "$DRAFT_CONFIG" \
