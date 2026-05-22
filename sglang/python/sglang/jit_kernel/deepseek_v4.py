@@ -361,6 +361,24 @@ def hash_topk(
     topk_weights = torch.empty(
         (num_tokens, topk_fused), dtype=torch.float32, device=router_logits.device
     )
+    # @Moh_7596 — NPU fallback: skip CUDA JIT, use PyTorch
+    if router_logits.device.type == 'npu' or not torch.cuda.is_available():
+        import torch.nn.functional as _F
+        # tid2eid: (vocab_size, topk_routed) - deterministic token->expert mapping
+        # input_ids: (num_tokens,) - the actual token ids
+        # router_logits: (num_tokens, num_routed_experts) - score logits
+        _routed_eids = tid2eid[input_ids.long()]  # (num_tokens, topk_routed)
+        _scores = torch.sqrt(_F.softplus(router_logits))  # (num_tokens, num_experts)
+        _routed_w = _scores.gather(1, _routed_eids.long()) * routed_scaling_factor
+        topk_ids[:, :topk_routed] = _routed_eids.to(torch.int32)
+        topk_weights[:, :topk_routed] = _routed_w.to(torch.float32)
+        if num_fused_shared_experts > 0:
+            _n_exp = router_logits.shape[1]
+            for _i in range(num_fused_shared_experts):
+                topk_ids[:, topk_routed + _i] = _n_exp + _i
+                topk_weights[:, topk_routed + _i] = 1.0
+        return topk_weights, topk_ids
+
     module = _jit_hash_topk_module()
     module.hash_topk(
         router_logits,

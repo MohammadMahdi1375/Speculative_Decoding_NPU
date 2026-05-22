@@ -156,21 +156,15 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
             return self._sliding_pytorch_reference(q, kv, qk_nope, qk_rope)
 
         try:
-            q_nope = q[..., :qk_nope].contiguous()
-            q_rope = q[..., qk_nope:].contiguous()
-            k_nope = kv[..., :qk_nope].contiguous()
-            k_rope = kv[..., qk_nope:].contiguous()
+            # @Moh_7596 — kernel MLA path requires query/key with rope baked in
+            # (head_dim=512). Don't split. Value uses only the nope portion (MLA).
+            q_full = q.contiguous()  # (T_q, N_q, 512)
+            kv_h = kv if kv.ndim == 3 else kv.unsqueeze(1)  # (T_kv, 1, 512)
+            k_full = kv_h.contiguous()
+            v_tensor = kv_h[..., :qk_nope].contiguous()  # (T_kv, 1, 448)
 
-            # @Moh_7596 — V4 passes kv as (T, D) (kv-head dim collapsed because
-            # MLA uses num_kv_heads=1). The kernel needs (T, N_kv, D) for TND
-            # layout. Unsqueeze to add a kv-head dim.
-            if k_nope.ndim == 2:
-                k_nope = k_nope.unsqueeze(1)  # (T, 1, D_nope)
-                k_rope = k_rope.unsqueeze(1)  # (T, 1, D_rope)
-            v_tensor = k_nope  # MLA: V head dim == nope dim
-
-            T_q = q_nope.shape[0] if q_nope.ndim >= 1 else 1
-            T_kv = k_nope.shape[0] if k_nope.ndim >= 1 else 1
+            T_q = q_full.shape[0]
+            T_kv = k_full.shape[0]
 
             sparse_indices = (
                 torch.arange(T_kv, device=q.device, dtype=torch.int32)
@@ -185,16 +179,14 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
             # separate query_rope/key_rope. Default 0 is MHA/GQA which requires
             # rope to be baked into q/k tensors.
             out_tup = torch.ops.npu.npu_sparse_flash_attention(
-                query=q_nope,
-                key=k_nope,
+                query=q_full,
+                key=k_full,
                 value=v_tensor,
                 sparse_indices=sparse_indices,
                 scale_value=self.softmax_scale,
                 sparse_block_size=1,
                 actual_seq_lengths_query=actual_seq_q,
                 actual_seq_lengths_kv=actual_seq_kv,
-                query_rope=q_rope,
-                key_rope=k_rope,
                 layout_query="TND",
                 layout_kv="TND",
                 sparse_mode=3,
