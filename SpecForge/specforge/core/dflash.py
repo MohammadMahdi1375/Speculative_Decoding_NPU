@@ -111,6 +111,18 @@ class OnlineDFlashModel(nn.Module):
         self.draft_model = draft_model
         self.lm_head = target_lm_head
         self.embed_tokens = target_embed_tokens
+
+        # @Moh_7596 — Cross-arch distillation: project draft output up to match
+        # target lm_head's input dim. With draft hidden_size=1024 and V4-Flash
+        # lm_head input=4096, we need a 1024→4096 projection.
+        _lm_head_in = getattr(target_lm_head, "in_features", None)
+        if _lm_head_in is None and hasattr(target_lm_head, "weight"):
+            _lm_head_in = target_lm_head.weight.shape[1]
+        _draft_out = draft_model.config.hidden_size
+        if _lm_head_in is not None and _lm_head_in != _draft_out:
+            self.output_proj = nn.Linear(_draft_out, _lm_head_in, bias=False)
+        else:
+            self.output_proj = None
         self.block_size = block_size
         self.mask_token_id = mask_token_id
         self.attention_backend = attention_backend
@@ -259,6 +271,8 @@ class OnlineDFlashModel(nn.Module):
             attention_mask=dflash_attn_mask,
         )
 
+        if self.output_proj is not None:
+            output_hidden = self.output_proj(output_hidden)
         logits = self.lm_head(output_hidden)
 
         # --- Labels: same-position prediction (position k predicts token anchor+k) ---
