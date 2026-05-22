@@ -366,6 +366,10 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
         if not getattr(self, "_ref_succeeded", False):
             logger.info(
                 f"[V4 NPU Session 3] OK PyTorch reference sliding: "
+                f"out.shape={tuple(out_full.shape)}"
+            )
+            self._ref_succeeded = True
+
         # @Moh_7596 — OUTPUT NaN probe (first 2 calls only)
         _out_probe_count = getattr(self, "_ref_attn_out_probe_count", 0)
         if _out_probe_count < 2:
@@ -383,10 +387,6 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
                 )
             except Exception as _e:
                 logger.warning(f"[@Moh_7596 REF_ATTN OUT probe error] {_e}")
-                f"out.shape={tuple(out_full.shape)}"
-            )
-            self._ref_succeeded = True
-
         return out_full.to(q.dtype)
 
     def _forward_csa(
