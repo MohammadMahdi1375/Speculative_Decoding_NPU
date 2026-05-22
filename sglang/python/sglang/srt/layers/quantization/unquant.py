@@ -644,6 +644,25 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
         # Defensive slice: if kernel returns full-size tensor, take local range
         if expert_tokens.numel() > num_local_experts:
             expert_tokens = expert_tokens[local_expert_start:local_expert_end].contiguous()
+        import sys as _sys_mi
+        if "MOE_INNER_1_after_init_routing" not in globals():
+            globals()["MOE_INNER_1_after_init_routing"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item()); _inf = bool(_t.isinf().any().item())
+                _w_nan = bool(layer.w13_weight.isnan().any().item())
+                _w2_nan = bool(layer.w2_weight.isnan().any().item())
+                _msg = f"[@Moh_7596 MOE_INNER 1_after_init_routing] ep_rank={ep_rank} ep_size={ep_size} num_local_experts={num_local_experts} local_range=[{local_expert_start},{local_expert_end}]"
+                _msg += f" | hidden_states.shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _msg += f" | expert_tokens.shape={tuple(expert_tokens.shape)} sum={int(expert_tokens.sum().item())} max={int(expert_tokens.max().item())} min={int(expert_tokens.min().item())}"
+                _msg += f" | w13.shape={tuple(layer.w13_weight.shape)} w13_nan={_w_nan} w2_nan={_w2_nan}"
+                _sys_mi.stderr.write(_msg + "\n")
+                _sys_mi.stderr.flush()
+            except Exception as _ee:
+                _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 1 err] {_ee}\n")
+                _sys_mi.stderr.flush()
         w13_bias = [layer.w13_weight_bias] if self.with_bias else None
         w2_bias = [layer.w2_weight_bias] if self.with_bias else None
 
@@ -659,6 +678,20 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             output_dtype=original_dtype,
         )[0]
 
+        import sys as _sys_mi
+        if "MOE_INNER_2_after_gmm1_gate_up_proj" not in globals():
+            globals()["MOE_INNER_2_after_gmm1_gate_up_proj"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item()); _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 MOE_INNER 2_after_gmm1_gate_up_proj] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_mi.stderr.write(_msg + "\n")
+                _sys_mi.stderr.flush()
+            except Exception as _ee:
+                _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 2_after_gmm1_gate_up_proj err] {_ee}\n")
+                _sys_mi.stderr.flush()
         # act_fn:
         if self.moe_runner_config.activation == "npu_swiglu_oai":
             from sgl_kernel_npu.activation.swiglu_oai import swiglu_oai
@@ -683,6 +716,20 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             output_dtype=original_dtype,
         )[0]
 
+        import sys as _sys_mi
+        if "MOE_INNER_3_after_gmm2_down_proj" not in globals():
+            globals()["MOE_INNER_3_after_gmm2_down_proj"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item()); _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 MOE_INNER 3_after_gmm2_down_proj] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_mi.stderr.write(_msg + "\n")
+                _sys_mi.stderr.flush()
+            except Exception as _ee:
+                _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 3_after_gmm2_down_proj err] {_ee}\n")
+                _sys_mi.stderr.flush()
         final_hidden_states = torch.ops.npu.npu_moe_finalize_routing(
             hidden_states,
             skip1=None,
@@ -694,6 +741,20 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             drop_pad_mode=2,
         )
 
+        import sys as _sys_mi
+        if "MOE_INNER_4_after_finalize_routing" not in globals():
+            globals()["MOE_INNER_4_after_finalize_routing"] = True
+            try:
+                _t = final_hidden_states
+                _nan = bool(_t.isnan().any().item()); _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 MOE_INNER 4_after_finalize_routing] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_mi.stderr.write(_msg + "\n")
+                _sys_mi.stderr.flush()
+            except Exception as _ee:
+                _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 4_after_finalize_routing err] {_ee}\n")
+                _sys_mi.stderr.flush()
         return StandardCombineInput(hidden_states=final_hidden_states)
 
     def forward_tpu(self, *args, **kwargs) -> CombineInput:
