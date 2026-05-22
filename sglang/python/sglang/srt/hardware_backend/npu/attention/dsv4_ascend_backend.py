@@ -322,7 +322,19 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
         )
         scores = scores.masked_fill(causal, float("-inf"))
 
-        weights = torch.softmax(scores, dim=-1)  # (N_q, T_q, T_kv)
+        # @Moh_7596 — NaN-safe softmax: any row entirely -inf produces NaN.
+        # 1) subtract per-row max for numerical stability (no-op for valid rows)
+        # 2) detect rows that are entirely masked (max == -inf)
+        # 3) compute softmax in fp32, then zero out NaN rows
+        scores_max = scores.amax(dim=-1, keepdim=True)
+        # rows where all positions are masked (max is still -inf)
+        all_masked = torch.isinf(scores_max) & (scores_max < 0)
+        # replace -inf max with 0 to prevent -inf - -inf = NaN
+        scores_safe = scores - torch.where(all_masked, torch.zeros_like(scores_max), scores_max)
+        weights = torch.softmax(scores_safe.float(), dim=-1)
+        # zero out rows that were entirely masked
+        weights = torch.where(all_masked, torch.zeros_like(weights), weights)
+        weights = weights.to(scores.dtype)
 
         # MLA: V is the nope part of kv only (rope dim has no value content)
         v = kv_f[..., :qk_nope].unsqueeze(0)  # (1, T_kv, qk_nope)
