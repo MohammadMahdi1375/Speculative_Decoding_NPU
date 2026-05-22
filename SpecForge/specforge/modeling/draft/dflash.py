@@ -233,11 +233,14 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
         )
         self.norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen3RotaryEmbedding(config)
-        self.fc = nn.Linear(
+        # @Moh_7596 — V4-Flash returns 4 MTP segments × target_hidden_size features.
+        # If target_feat_dim is set in config, use it directly (handles cross-arch
+        # distillation where target hidden_size != draft hidden_size).
+        _target_feat_dim = getattr(
+            config, "target_feat_dim",
             len(self.target_layer_ids) * config.hidden_size,
-            config.hidden_size,
-            bias=False,
         )
+        self.fc = nn.Linear(_target_feat_dim, config.hidden_size, bias=False)
         self.hidden_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.block_size = config.block_size
         self.mask_token_id = dflash_config.get("mask_token_id", None)
