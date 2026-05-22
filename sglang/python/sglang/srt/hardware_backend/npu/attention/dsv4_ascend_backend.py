@@ -305,6 +305,22 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
         """
         T_q, N_q, D = q.shape
         T_kv = kv.shape[0]
+        # @Moh_7596 — INPUT NaN probe (first 2 calls only)
+        _probe_count = getattr(self, "_ref_attn_in_probe_count", 0)
+        if _probe_count < 2:
+            self._ref_attn_in_probe_count = _probe_count + 1
+            try:
+                _q_nan = bool(q.isnan().any().item())
+                _kv_nan = bool(kv.isnan().any().item())
+                _q_rng = f"({q.float().min().item():.4f},{q.float().max().item():.4f})" if not _q_nan else "NaN"
+                _kv_rng = f"({kv.float().min().item():.4f},{kv.float().max().item():.4f})" if not _kv_nan else "NaN"
+                logger.warning(
+                    f"[@Moh_7596 REF_ATTN IN #{self._ref_attn_in_probe_count}] "
+                    f"q.shape={tuple(q.shape)} q_nan={_q_nan} q_range={_q_rng} | "
+                    f"kv.shape={tuple(kv.shape)} kv_nan={_kv_nan} kv_range={_kv_rng}"
+                )
+            except Exception as _e:
+                logger.warning(f"[@Moh_7596 REF_ATTN IN probe error] {_e}")
 
         # All math in fp32 for stability (we're already slow)
         q_f = q.float()
@@ -350,6 +366,23 @@ class DeepseekV4AscendAttnBackend(AscendAttnBackend):
         if not getattr(self, "_ref_succeeded", False):
             logger.info(
                 f"[V4 NPU Session 3] OK PyTorch reference sliding: "
+        # @Moh_7596 — OUTPUT NaN probe (first 2 calls only)
+        _out_probe_count = getattr(self, "_ref_attn_out_probe_count", 0)
+        if _out_probe_count < 2:
+            self._ref_attn_out_probe_count = _out_probe_count + 1
+            try:
+                _out_nan = bool(out.isnan().any().item())
+                _out_inf = bool(out.isinf().any().item())
+                _out_rng = f"({out.float().min().item():.4f},{out.float().max().item():.4f})" if not (_out_nan or _out_inf) else "NaN/Inf"
+                _w_nan = bool(weights.isnan().any().item()) if "weights" in locals() else "n/a"
+                _scores_nan = bool(scores.isnan().any().item()) if "scores" in locals() else "n/a"
+                logger.warning(
+                    f"[@Moh_7596 REF_ATTN OUT #{self._ref_attn_out_probe_count}] "
+                    f"out_nan={_out_nan} out_inf={_out_inf} out_range={_out_rng} | "
+                    f"weights_nan={_w_nan} scores_nan={_scores_nan}"
+                )
+            except Exception as _e:
+                logger.warning(f"[@Moh_7596 REF_ATTN OUT probe error] {_e}")
                 f"out.shape={tuple(out_full.shape)}"
             )
             self._ref_succeeded = True
