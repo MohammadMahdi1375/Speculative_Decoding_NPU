@@ -123,6 +123,8 @@ torchrun \
     --sglang-ep-size "${SPECFORGE_SGLANG_EP_SIZE:-1}" \
     --seed "$SEED" \
     --sglang-mem-fraction-static "$SGLANG_MEM_FRACTION_STATIC" \
+    --embedding-key "${EMBEDDING_KEY:-model.embed_tokens.weight}" \
+    --lm-head-key "${LM_HEAD_KEY:-lm_head.weight}" \
     --draft-config-path "$DRAFT_CONFIG" \
     --train-data-path "$TRAIN_DATA" \
     --output-dir "$OUTPUT_DIR" \
