@@ -780,6 +780,24 @@ class DeepseekV2MoE(nn.Module):
                 )
             # router_logits: (num_tokens, n_experts)
             router_logits = self.gate(hidden_states, gemm_output_zero_allocator)
+            import sys as _sys_moe
+            if "MOE_STAGE_1_after_gate" not in globals():
+                globals()["MOE_STAGE_1_after_gate"] = True
+                try:
+                    _t = router_logits
+                    if hasattr(_t, "isnan"):
+                        _nan = bool(_t.isnan().any().item())
+                        _inf = bool(_t.isinf().any().item())
+                        _msg = f"[@Moh_7596 MOE_STAGE 1_after_gate] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                        if not (_nan or _inf):
+                            _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                    else:
+                        _msg = f"[@Moh_7596 MOE_STAGE 1_after_gate] type={type(_t).__name__}"
+                    _sys_moe.stderr.write(_msg + "\n")
+                    _sys_moe.stderr.flush()
+                except Exception as _ee:
+                    _sys_moe.stderr.write(f"[@Moh_7596 MOE_STAGE 1_after_gate err] {_ee}\n")
+                    _sys_moe.stderr.flush()
             topk_kwargs = (
                 {"input_ids": input_ids_global}
                 if getattr(self, "is_hash", False)
@@ -829,6 +847,24 @@ class DeepseekV2MoE(nn.Module):
             hidden_states,
             topk_output,
         )
+        import sys as _sys_moe
+        if "MOE_STAGE_2_after_experts" not in globals():
+            globals()["MOE_STAGE_2_after_experts"] = True
+            try:
+                _t = final_hidden_states
+                if hasattr(_t, "isnan"):
+                    _nan = bool(_t.isnan().any().item())
+                    _inf = bool(_t.isinf().any().item())
+                    _msg = f"[@Moh_7596 MOE_STAGE 2_after_experts] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                    if not (_nan or _inf):
+                        _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                else:
+                    _msg = f"[@Moh_7596 MOE_STAGE 2_after_experts] type={type(_t).__name__}"
+                _sys_moe.stderr.write(_msg + "\n")
+                _sys_moe.stderr.flush()
+            except Exception as _ee:
+                _sys_moe.stderr.write(f"[@Moh_7596 MOE_STAGE 2_after_experts err] {_ee}\n")
+                _sys_moe.stderr.flush()
         if (
             not _is_cuda
             and not _is_musa
@@ -845,6 +881,24 @@ class DeepseekV2MoE(nn.Module):
             shared_output,
             self.routed_scaling_factor,
         )
+        import sys as _sys_moe
+        if "MOE_STAGE_3_after_fuse" not in globals():
+            globals()["MOE_STAGE_3_after_fuse"] = True
+            try:
+                _t = final_hidden_states
+                if hasattr(_t, "isnan"):
+                    _nan = bool(_t.isnan().any().item())
+                    _inf = bool(_t.isinf().any().item())
+                    _msg = f"[@Moh_7596 MOE_STAGE 3_after_fuse] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                    if not (_nan or _inf):
+                        _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                else:
+                    _msg = f"[@Moh_7596 MOE_STAGE 3_after_fuse] type={type(_t).__name__}"
+                _sys_moe.stderr.write(_msg + "\n")
+                _sys_moe.stderr.flush()
+            except Exception as _ee:
+                _sys_moe.stderr.write(f"[@Moh_7596 MOE_STAGE 3_after_fuse err] {_ee}\n")
+                _sys_moe.stderr.flush()
 
         if self.tp_size > 1 and not should_skip_post_experts_all_reduce(
             is_tp_path=True,
@@ -852,6 +906,24 @@ class DeepseekV2MoE(nn.Module):
             should_allreduce_fusion=should_allreduce_fusion,
         ):
             final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
+        import sys as _sys_moe
+        if "MOE_STAGE_4_before_return" not in globals():
+            globals()["MOE_STAGE_4_before_return"] = True
+            try:
+                _t = final_hidden_states
+                if hasattr(_t, "isnan"):
+                    _nan = bool(_t.isnan().any().item())
+                    _inf = bool(_t.isinf().any().item())
+                    _msg = f"[@Moh_7596 MOE_STAGE 4_before_return] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                    if not (_nan or _inf):
+                        _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                else:
+                    _msg = f"[@Moh_7596 MOE_STAGE 4_before_return] type={type(_t).__name__}"
+                _sys_moe.stderr.write(_msg + "\n")
+                _sys_moe.stderr.flush()
+            except Exception as _ee:
+                _sys_moe.stderr.write(f"[@Moh_7596 MOE_STAGE 4_before_return err] {_ee}\n")
+                _sys_moe.stderr.flush()
         return final_hidden_states
 
     def forward_cpu(
