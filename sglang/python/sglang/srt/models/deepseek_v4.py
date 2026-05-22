@@ -26,6 +26,29 @@ from sglang.srt.layers.attention.nsa.utils import (
 )
 from sglang.srt.layers.communicator import get_attn_tp_context
 from sglang.srt.layers.deepseek_v4_rope import apply_rotary_emb_triton
+
+# @Moh_7596 - q-stage NaN probe tracker (each stage fires once per process)
+_Q_STAGE_LOGGED = set()
+def _log_q_stage(name, t):
+    import logging as _logging
+    if name in _Q_STAGE_LOGGED:
+        return
+    _Q_STAGE_LOGGED.add(name)
+    try:
+        has_nan = bool(t.isnan().any().item())
+        has_inf = bool(t.isinf().any().item())
+        if has_nan or has_inf:
+            _logging.getLogger(__name__).warning(
+                f"[@Moh_7596 Q_STAGE {name}] shape={tuple(t.shape)} NaN={has_nan} Inf={has_inf} <-- BAD"
+            )
+        else:
+            _logging.getLogger(__name__).warning(
+                f"[@Moh_7596 Q_STAGE {name}] shape={tuple(t.shape)} clean "
+                f"range=({t.float().min().item():.4f},{t.float().max().item():.4f})"
+            )
+    except Exception as e:
+        _logging.getLogger(__name__).warning(f"[@Moh_7596 Q_STAGE {name} probe error] {e}")
+
 from sglang.srt.layers.dp_attention import (
     _DpGatheredBufferWrapper,
     attn_tp_all_gather,
@@ -368,12 +391,15 @@ class MQALayer(nn.Module):
         q: torch.Tensor,
         positions: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        _log_q_stage("0_input_to_q_b", q)
         q, _ = self.wq_b(q)
+        _log_q_stage("1_after_wq_b", q)
         q = q.view(-1, self.n_local_heads, self.head_dim)
         if self.use_jit_norm:
             q = rmsnorm_self(q, self.eps)
         else:
             q = rms_normalize_triton(q, self.eps)
+        _log_q_stage("2_after_rmsnorm", q)
         if positions is not None:
             fused_rope(
                 q[..., -self.qk_rope_head_dim :],
@@ -383,6 +409,7 @@ class MQALayer(nn.Module):
             )
         else:
             apply_rotary_emb_triton(q[..., -self.qk_rope_head_dim :], self.freqs_cis)
+        _log_q_stage("3_after_rope", q)
         return q
 
     def _compute_kv(
