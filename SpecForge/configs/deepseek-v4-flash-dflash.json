@@ -26,5 +26,6 @@
   "dflash_config": {},
   "target_feat_dim": 16384,
   "target_hidden_size": 4096,
-  "num_mtp_segments": 4
+  "num_mtp_segments": 4,
+  "noise_embed_dim": 4096
 }
