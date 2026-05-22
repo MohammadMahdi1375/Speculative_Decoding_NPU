@@ -442,6 +442,11 @@ def main():
         loss_decay_gamma=args.loss_decay_gamma,
     )
 
+    # @Moh_7596 — move all params to NPU before FSDP. Our new projection
+    # layers (embed_proj, output_proj, fc) default to CPU on construction,
+    # while target components are already on NPU. Pre-move resolves the mix.
+    _local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    dflash_model = dflash_model.to(torch.device(f"npu:{_local_rank}"))
     dflash_model = FSDP(
         dflash_model,
         use_orig_params=True,
