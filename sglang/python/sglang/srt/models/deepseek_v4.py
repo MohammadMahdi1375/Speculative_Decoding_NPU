@@ -795,8 +795,53 @@ class MQALayer(nn.Module):
             wo_a = self.wo_a.weight.view(self.n_local_groups, _o_lora_rank_per_rank, -1)
             o = torch.einsum("tgd,grd->tgr", o, wo_a)
 
+        import sys as _sys_op
+        if "POST_O_PROJ_1_after_wo_a_einsum" not in globals():
+            globals()["POST_O_PROJ_1_after_wo_a_einsum"] = True
+            try:
+                _t = o
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 POST_O_PROJ 1_after_wo_a_einsum] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_op.stderr.write(_msg + "\n")
+                _sys_op.stderr.flush()
+            except Exception as _ee:
+                _sys_op.stderr.write(f"[@Moh_7596 POST_O_PROJ 1_after_wo_a_einsum err] {_ee}\n")
+                _sys_op.stderr.flush()
         o, _ = self.wo_b(o.flatten(1))
+        import sys as _sys_op
+        if "POST_O_PROJ_2_after_wo_b" not in globals():
+            globals()["POST_O_PROJ_2_after_wo_b"] = True
+            try:
+                _t = o
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 POST_O_PROJ 2_after_wo_b] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_op.stderr.write(_msg + "\n")
+                _sys_op.stderr.flush()
+            except Exception as _ee:
+                _sys_op.stderr.write(f"[@Moh_7596 POST_O_PROJ 2_after_wo_b err] {_ee}\n")
+                _sys_op.stderr.flush()
 
+        import sys as _sys_op
+        if "POST_O_PROJ_3_before_return" not in globals():
+            globals()["POST_O_PROJ_3_before_return"] = True
+            try:
+                _t = o
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 POST_O_PROJ 3_before_return] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_op.stderr.write(_msg + "\n")
+                _sys_op.stderr.flush()
+            except Exception as _ee:
+                _sys_op.stderr.write(f"[@Moh_7596 POST_O_PROJ 3_before_return err] {_ee}\n")
+                _sys_op.stderr.flush()
         return o
 
 
