@@ -1033,6 +1033,21 @@ class DeepseekV4DecoderLayer(nn.Module):
         hidden_states, post, comb = self.hc_pre(
             hidden_states, self.hc_attn_fn, self.hc_attn_scale, self.hc_attn_base
         )
+        import sys as _sys_dl
+        if "DL_STAGE_1_after_hc_pre_attn" not in globals():
+            globals()["DL_STAGE_1_after_hc_pre_attn"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 DL_STAGE 1_after_hc_pre_attn] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_dl.stderr.write(_msg + "\n")
+                _sys_dl.stderr.flush()
+            except Exception as _ee:
+                _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 1_after_hc_pre_attn err] {_ee}\n")
+                _sys_dl.stderr.flush()
         hidden_states = self.input_layernorm(hidden_states)
 
         hidden_states = self.self_attn(
@@ -1042,11 +1057,56 @@ class DeepseekV4DecoderLayer(nn.Module):
         )
 
         hidden_states = self.hc_post(hidden_states, residual, post, comb)
+        import sys as _sys_dl
+        if "DL_STAGE_2_after_hc_post_attn" not in globals():
+            globals()["DL_STAGE_2_after_hc_post_attn"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 DL_STAGE 2_after_hc_post_attn] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_dl.stderr.write(_msg + "\n")
+                _sys_dl.stderr.flush()
+            except Exception as _ee:
+                _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 2_after_hc_post_attn err] {_ee}\n")
+                _sys_dl.stderr.flush()
         residual = hidden_states
         hidden_states, post, comb = self.hc_pre(
             hidden_states, self.hc_ffn_fn, self.hc_ffn_scale, self.hc_ffn_base
         )
+        import sys as _sys_dl
+        if "DL_STAGE_3_after_hc_pre_ffn" not in globals():
+            globals()["DL_STAGE_3_after_hc_pre_ffn"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 DL_STAGE 3_after_hc_pre_ffn] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_dl.stderr.write(_msg + "\n")
+                _sys_dl.stderr.flush()
+            except Exception as _ee:
+                _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 3_after_hc_pre_ffn err] {_ee}\n")
+                _sys_dl.stderr.flush()
         hidden_states = self.post_attention_layernorm(hidden_states)
+        import sys as _sys_dl
+        if "DL_STAGE_4_after_post_attn_ln" not in globals():
+            globals()["DL_STAGE_4_after_post_attn_ln"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 DL_STAGE 4_after_post_attn_ln] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_dl.stderr.write(_msg + "\n")
+                _sys_dl.stderr.flush()
+            except Exception as _ee:
+                _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 4_after_post_attn_ln err] {_ee}\n")
+                _sys_dl.stderr.flush()
 
         _use_cp = self.nsa_enable_prefill_cp and nsa_use_prefill_cp(forward_batch)
         _use_tp_moe_gather = (
@@ -1085,6 +1145,21 @@ class DeepseekV4DecoderLayer(nn.Module):
             input_ids=input_ids,
             input_ids_global=input_ids_global,
         )
+        import sys as _sys_dl
+        if "DL_STAGE_5_after_mlp" not in globals():
+            globals()["DL_STAGE_5_after_mlp"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 DL_STAGE 5_after_mlp] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_dl.stderr.write(_msg + "\n")
+                _sys_dl.stderr.flush()
+            except Exception as _ee:
+                _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 5_after_mlp err] {_ee}\n")
+                _sys_dl.stderr.flush()
         if _use_tp_moe_gather:
             hidden_states, global_hidden_states = get_local_dp_buffer(), hidden_states
             dp_scatter(hidden_states, global_hidden_states, forward_batch)
@@ -1095,6 +1170,21 @@ class DeepseekV4DecoderLayer(nn.Module):
             hidden_states = torch.cat(gathered)
 
         hidden_states = self.hc_post(hidden_states, residual, post, comb)
+        import sys as _sys_dl
+        if "DL_STAGE_6_after_hc_post_ffn" not in globals():
+            globals()["DL_STAGE_6_after_hc_post_ffn"] = True
+            try:
+                _t = hidden_states
+                _nan = bool(_t.isnan().any().item())
+                _inf = bool(_t.isinf().any().item())
+                _msg = f"[@Moh_7596 DL_STAGE 6_after_hc_post_ffn] shape={tuple(_t.shape)} NaN={_nan} Inf={_inf}"
+                if not (_nan or _inf):
+                    _msg += f" range=({_t.float().min().item():.4f},{_t.float().max().item():.4f})"
+                _sys_dl.stderr.write(_msg + "\n")
+                _sys_dl.stderr.flush()
+            except Exception as _ee:
+                _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 6_after_hc_post_ffn err] {_ee}\n")
+                _sys_dl.stderr.flush()
 
         return hidden_states
 
