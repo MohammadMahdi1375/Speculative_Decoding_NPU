@@ -646,17 +646,17 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
                 x,
                 topk_ids,
                 active_num=num_tokens * top_k,
-                expert_num=num_experts,
+                expert_num=num_local_experts,  # @Moh_7596: topk_ids are LOCAL IDs (0..num_local_experts) per rank
                 expert_tokens_num_type=1,
                 expert_tokens_num_flag=True,
-                active_expert_range=[local_expert_start, local_expert_end],
+                active_expert_range=[0, num_local_experts],  # @Moh_7596: local IDs match converted topk_ids
                 quant_mode=-1,
             )
         )
         expert_tokens = expert_tokens.to(torch.int64)
         # Defensive slice: if kernel returns full-size tensor, take local range
         if expert_tokens.numel() > num_local_experts:
-            expert_tokens = expert_tokens[local_expert_start:local_expert_end].contiguous()
+            expert_tokens = expert_tokens[:num_local_experts].contiguous()  # @Moh_7596: kernel returns local-indexed counts
         import sys as _sys_mi
         if "MOE_INNER_1_after_init_routing" not in globals():
             globals()["MOE_INNER_1_after_init_routing"] = True
