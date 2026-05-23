@@ -368,6 +368,22 @@ def hash_topk(
         # input_ids: (num_tokens,) - the actual token ids
         # router_logits: (num_tokens, num_routed_experts) - score logits
         _routed_eids = tid2eid[input_ids.long()]  # (num_tokens, topk_routed)
+        import sys as _sys_hp
+        if "HASH_TOPK_DUMP" not in globals():
+            globals()["HASH_TOPK_DUMP"] = True
+            try:
+                _msg = f"[@Moh_7596 HASH_TOPK] tid2eid.shape={tuple(tid2eid.shape)} dtype={tid2eid.dtype}"
+                _msg += f" tid2eid_min={int(tid2eid.min().item())} tid2eid_max={int(tid2eid.max().item())}"
+                _msg += f" unique={int(tid2eid.unique().numel())}"
+                _msg += f" | _routed_eids.shape={tuple(_routed_eids.shape)}"
+                _msg += f" _routed_eids_min={int(_routed_eids.min().item())} _routed_eids_max={int(_routed_eids.max().item())}"
+                _msg += f" | topk_routed={topk_routed} num_fused_shared={num_fused_shared_experts}"
+                _msg += f" | router_logits.shape={tuple(router_logits.shape)}"
+                _sys_hp.stderr.write(_msg + "\n")
+                _sys_hp.stderr.flush()
+            except Exception as _ee:
+                _sys_hp.stderr.write(f"[@Moh_7596 HASH_TOPK probe err] {_ee}\n")
+                _sys_hp.stderr.flush()
         _scores = torch.sqrt(_F.softplus(router_logits))  # (num_tokens, num_experts)
         _routed_w = _scores.gather(1, _routed_eids.long()) * routed_scaling_factor
         topk_ids[:, :topk_routed] = _routed_eids.to(torch.int32)
