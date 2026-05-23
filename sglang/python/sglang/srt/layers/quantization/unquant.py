@@ -628,6 +628,19 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
         local_expert_start = ep_rank * num_local_experts
         local_expert_end = local_expert_start + num_local_experts
 
+        import sys as _sys_fn
+        if "FWDNPU_TOPK_DUMP" not in globals():
+            globals()["FWDNPU_TOPK_DUMP"] = True
+            try:
+                _msg = f"[@Moh_7596 FWDNPU_TOPK] ep_rank={ep_rank} ep_size={ep_size} num_local_experts={num_local_experts} local_range=[{local_expert_start},{local_expert_end}] num_experts={num_experts}"
+                _msg += f" | topk_ids.shape={tuple(topk_ids.shape)} dtype={topk_ids.dtype}"
+                _msg += f" min={int(topk_ids.min().item())} max={int(topk_ids.max().item())} unique={int(topk_ids.unique().numel())}"
+                _msg += f" sample_row0={topk_ids[0].tolist()} sample_row1={topk_ids[1].tolist()}"
+                _sys_fn.stderr.write(_msg + "\n")
+                _sys_fn.stderr.flush()
+            except Exception as _ee:
+                _sys_fn.stderr.write(f"[@Moh_7596 FWDNPU_TOPK err] {_ee}\n")
+                _sys_fn.stderr.flush()
         hidden_states, expanded_row_idx, expert_tokens, _ = (
             torch.ops.npu.npu_moe_init_routing_v2(
                 x,
