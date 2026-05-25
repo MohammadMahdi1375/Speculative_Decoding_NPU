@@ -165,20 +165,27 @@ def hc_split_sinkhorn(
     sinkhorn_iters: int = 20,
     eps: float = 1e-6,
 ):
-    b, s, _ = mixes.size()
-    pre = mixes.new_empty(b, s, hc_mult)
-    post = mixes.new_empty(b, s, hc_mult)
-    comb = mixes.new_empty(b, s, hc_mult, hc_mult)
-    kernel = hc_split_sinkhorn_kernel(hc_mult, sinkhorn_iters, eps)
-    kernel(
-        mixes.view(-1, (2 + hc_mult) * hc_mult),
-        hc_scale,
-        hc_base,
-        pre.view(-1, hc_mult),
-        post.view(-1, hc_mult),
-        comb.view(-1, hc_mult, hc_mult),
+    # @Moh_7596 hc_split: module-level PyTorch impl matching tilelang kernel.
+    # Old code returned new_empty() because the tilelang kernel is a no-op
+    # stub on NPU -- garbage memory was the NaN source.
+    b, s, mix_hc = mixes.shape
+    hc = hc_mult
+    mf = mixes.reshape(b * s, mix_hc).float()
+    sc = hc_scale.float()
+    ba = hc_base.float()
+    pre = torch.sigmoid(mf[:, :hc] * sc[0] + ba[:hc]) + eps
+    post = 2.0 * torch.sigmoid(mf[:, hc:2*hc] * sc[1] + ba[hc:2*hc])
+    comb = (mf[:, 2*hc:] * sc[2] + ba[2*hc:]).view(b * s, hc, hc)
+    comb = torch.softmax(comb, dim=-1) + eps
+    comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
+    for _ in range(sinkhorn_iters - 1):
+        comb = comb / (comb.sum(dim=-1, keepdim=True) + eps)
+        comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
+    return (
+        pre.view(b, s, hc).to(mixes.dtype),
+        post.view(b, s, hc).to(mixes.dtype),
+        comb.view(b, s, hc, hc).to(mixes.dtype),
     )
-    return pre, post, comb
 
 
 @tilelang.jit(
@@ -818,12 +825,16 @@ if _os.path.isfile(_TLA_HC_FILE):
         pre_raw = mixes_2d[..., :hc_mult]
         post_raw = mixes_2d[..., hc_mult:2 * hc_mult]
         comb_raw = mixes_2d[..., 2 * hc_mult:].reshape(-1, hc_mult, hc_mult)
-        pre = torch.softmax(pre_raw, dim=-1)
-        post = torch.softmax(post_raw, dim=-1)
-        comb = torch.softmax(comb_raw, dim=-1)
-        for _ in range(sinkhorn_iters):
-            comb = comb / (comb.sum(dim=-2, keepdim=True).clamp_min(eps))
-            comb = comb / (comb.sum(dim=-1, keepdim=True).clamp_min(eps))
+        # @Moh_7596: correct math matching the tilelang kernel.
+        # Previous fallback dropped hc_scale and hc_base -- THAT was the NaN source.
+        pre = torch.sigmoid(pre_raw * scale_f32[0] + base_f32[:hc_mult]) + eps
+        post = 2.0 * torch.sigmoid(post_raw * scale_f32[1] + base_f32[hc_mult:2 * hc_mult])
+        comb = comb_raw * scale_f32[2] + base_f32[2 * hc_mult:].reshape(hc_mult, hc_mult)
+        comb = torch.softmax(comb, dim=-1) + eps
+        comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
+        for _ in range(sinkhorn_iters - 1):
+            comb = comb / (comb.sum(dim=-1, keepdim=True) + eps)
+            comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
         return (
             pre.reshape(b, s, hc_mult).to(mixes.dtype),
             post.reshape(b, s, hc_mult).to(mixes.dtype),

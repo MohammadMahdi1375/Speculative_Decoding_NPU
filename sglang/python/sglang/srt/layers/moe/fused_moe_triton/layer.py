@@ -1063,23 +1063,88 @@ class FusedMoE(torch.nn.Module):
         dispatch_output = self.dispatcher.dispatch(
             hidden_states=hidden_states, topk_output=topk_output
         )
+        try:
+            _lid_fm = getattr(self, "layer_id", "unk")
+            _nk_fm = f"FUSEDMOE_FWD_NAN_1_after_dispatch_L{_lid_fm}"
+            _tx_fm = dispatch_output
+            if hasattr(_tx_fm, "hidden_states"):
+                _tx_fm = _tx_fm.hidden_states
+            if hasattr(_tx_fm, "isnan") and _tx_fm.isnan().any().item():
+                if _nk_fm not in globals():
+                    globals()[_nk_fm] = True
+                    import sys as _sys_fm
+                    _sys_fm.stderr.write(f"[@Moh_7596 FUSEDMOE_FWD_NAN] 1_after_dispatch layer={_lid_fm} NaN; shape={tuple(_tx_fm.shape)}\n")
+                    _sys_fm.stderr.flush()
+        except Exception: pass
 
         combine_input = self.run_moe_core(
             dispatch_output=dispatch_output,
         )
+        try:
+            _lid_fm = getattr(self, "layer_id", "unk")
+            _nk_fm = f"FUSEDMOE_FWD_NAN_2_after_run_moe_core_L{_lid_fm}"
+            _tx_fm = combine_input
+            if hasattr(_tx_fm, "hidden_states"):
+                _tx_fm = _tx_fm.hidden_states
+            if hasattr(_tx_fm, "isnan") and _tx_fm.isnan().any().item():
+                if _nk_fm not in globals():
+                    globals()[_nk_fm] = True
+                    import sys as _sys_fm
+                    _sys_fm.stderr.write(f"[@Moh_7596 FUSEDMOE_FWD_NAN] 2_after_run_moe_core layer={_lid_fm} NaN; shape={tuple(_tx_fm.shape)}\n")
+                    _sys_fm.stderr.flush()
+        except Exception: pass
 
         with use_symmetric_memory(
             get_tp_group(), disabled=not is_allocation_symmetric()
         ):
             final_hidden_states = self.dispatcher.combine(combine_input=combine_input)
+            try:
+                _lid_fm = getattr(self, "layer_id", "unk")
+                _nk_fm = f"FUSEDMOE_FWD_NAN_3_after_combine_L{_lid_fm}"
+                _tx_fm = final_hidden_states
+                if hasattr(_tx_fm, "hidden_states"):
+                    _tx_fm = _tx_fm.hidden_states
+                if hasattr(_tx_fm, "isnan") and _tx_fm.isnan().any().item():
+                    if _nk_fm not in globals():
+                        globals()[_nk_fm] = True
+                        import sys as _sys_fm
+                        _sys_fm.stderr.write(f"[@Moh_7596 FUSEDMOE_FWD_NAN] 3_after_combine layer={_lid_fm} NaN; shape={tuple(_tx_fm.shape)}\n")
+                        _sys_fm.stderr.flush()
+            except Exception: pass
 
             # TODO: should we add some conditions here?
             final_hidden_states = final_hidden_states[
                 ..., :origin_hidden_states_dim
             ].contiguous()
+            try:
+                _lid_fm = getattr(self, "layer_id", "unk")
+                _nk_fm = f"FUSEDMOE_FWD_NAN_4_after_slice_L{_lid_fm}"
+                _tx_fm = final_hidden_states
+                if hasattr(_tx_fm, "hidden_states"):
+                    _tx_fm = _tx_fm.hidden_states
+                if hasattr(_tx_fm, "isnan") and _tx_fm.isnan().any().item():
+                    if _nk_fm not in globals():
+                        globals()[_nk_fm] = True
+                        import sys as _sys_fm
+                        _sys_fm.stderr.write(f"[@Moh_7596 FUSEDMOE_FWD_NAN] 4_after_slice layer={_lid_fm} NaN; shape={tuple(_tx_fm.shape)}\n")
+                        _sys_fm.stderr.flush()
+            except Exception: pass
 
         if self.reduce_results and (self.moe_tp_size > 1 or self.moe_ep_size > 1):
             final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
+            try:
+                _lid_fm = getattr(self, "layer_id", "unk")
+                _nk_fm = f"FUSEDMOE_FWD_NAN_5_after_allreduce_L{_lid_fm}"
+                _tx_fm = final_hidden_states
+                if hasattr(_tx_fm, "hidden_states"):
+                    _tx_fm = _tx_fm.hidden_states
+                if hasattr(_tx_fm, "isnan") and _tx_fm.isnan().any().item():
+                    if _nk_fm not in globals():
+                        globals()[_nk_fm] = True
+                        import sys as _sys_fm
+                        _sys_fm.stderr.write(f"[@Moh_7596 FUSEDMOE_FWD_NAN] 5_after_allreduce layer={_lid_fm} NaN; shape={tuple(_tx_fm.shape)}\n")
+                        _sys_fm.stderr.flush()
+            except Exception: pass
 
         return final_hidden_states
 

@@ -889,12 +889,12 @@ class DeepseekV4DecoderLayer(nn.Module):
         self.hc_eps = config.hc_eps
         mix_hc = (2 + hc_mult) * hc_mult
         hc_dim = hc_mult * config.hidden_size
-        self.hc_attn_fn = nn.Parameter(torch.empty(mix_hc, hc_dim, dtype=torch.float32))
-        self.hc_ffn_fn = nn.Parameter(torch.empty(mix_hc, hc_dim, dtype=torch.float32))
-        self.hc_attn_base = nn.Parameter(torch.empty(mix_hc, dtype=torch.float32))
-        self.hc_ffn_base = nn.Parameter(torch.empty(mix_hc, dtype=torch.float32))
-        self.hc_attn_scale = nn.Parameter(torch.empty(3, dtype=torch.float32))
-        self.hc_ffn_scale = nn.Parameter(torch.empty(3, dtype=torch.float32))
+        self.hc_attn_fn = nn.Parameter(torch.zeros(mix_hc, hc_dim, dtype=torch.float32))
+        self.hc_ffn_fn = nn.Parameter(torch.zeros(mix_hc, hc_dim, dtype=torch.float32))
+        self.hc_attn_base = nn.Parameter(torch.zeros(mix_hc, dtype=torch.float32))
+        self.hc_ffn_base = nn.Parameter(torch.zeros(mix_hc, dtype=torch.float32))
+        self.hc_attn_scale = nn.Parameter(torch.zeros(3, dtype=torch.float32))
+        self.hc_ffn_scale = nn.Parameter(torch.zeros(3, dtype=torch.float32))
         self.rms_norm_eps = config.rms_norm_eps
         self.nsa_enable_prefill_cp = is_nsa_enable_prefill_cp()
 
@@ -1029,6 +1029,13 @@ class DeepseekV4DecoderLayer(nn.Module):
         forward_batch: ForwardBatch,
         input_ids_global: torch.Tensor,
     ) -> torch.Tensor:
+        # @Moh_7596: per-layer INPUT NaN check
+        import sys as _sys_in
+        _nk_in = f"DL_INPUT_NAN_L{self.layer_id}"
+        if hidden_states.isnan().any().item() and _nk_in not in globals():
+            globals()[_nk_in] = True
+            _sys_in.stderr.write(f"[@Moh_7596 DL_INPUT_NAN] layer_id={self.layer_id} INPUT has NaN\n")
+            _sys_in.stderr.flush()
         residual = hidden_states
         hidden_states, post, comb = self.hc_pre(
             hidden_states, self.hc_attn_fn, self.hc_attn_scale, self.hc_attn_base
@@ -1048,6 +1055,15 @@ class DeepseekV4DecoderLayer(nn.Module):
             except Exception as _ee:
                 _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 1_after_hc_pre_attn err] {_ee}\n")
                 _sys_dl.stderr.flush()
+        # @Moh_7596 per-(stage, layer) NaN-only probe
+        try:
+            _nk_dlnS1 = f"DL_NAN_S1_L{self.layer_id}"
+            if hidden_states.isnan().any().item() and _nk_dlnS1 not in globals():
+                globals()[_nk_dlnS1] = True
+                import sys as _sys_dln1
+                _sys_dln1.stderr.write(f"[@Moh_7596 DL_NAN_S1] layer={self.layer_id} first NaN at stage 1\n")
+                _sys_dln1.stderr.flush()
+        except Exception: pass
         hidden_states = self.input_layernorm(hidden_states)
 
         hidden_states = self.self_attn(
@@ -1072,6 +1088,15 @@ class DeepseekV4DecoderLayer(nn.Module):
             except Exception as _ee:
                 _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 2_after_hc_post_attn err] {_ee}\n")
                 _sys_dl.stderr.flush()
+        # @Moh_7596 per-(stage, layer) NaN-only probe
+        try:
+            _nk_dlnS2 = f"DL_NAN_S2_L{self.layer_id}"
+            if hidden_states.isnan().any().item() and _nk_dlnS2 not in globals():
+                globals()[_nk_dlnS2] = True
+                import sys as _sys_dln2
+                _sys_dln2.stderr.write(f"[@Moh_7596 DL_NAN_S2] layer={self.layer_id} first NaN at stage 2\n")
+                _sys_dln2.stderr.flush()
+        except Exception: pass
         residual = hidden_states
         hidden_states, post, comb = self.hc_pre(
             hidden_states, self.hc_ffn_fn, self.hc_ffn_scale, self.hc_ffn_base
@@ -1091,6 +1116,15 @@ class DeepseekV4DecoderLayer(nn.Module):
             except Exception as _ee:
                 _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 3_after_hc_pre_ffn err] {_ee}\n")
                 _sys_dl.stderr.flush()
+        # @Moh_7596 per-(stage, layer) NaN-only probe
+        try:
+            _nk_dlnS3 = f"DL_NAN_S3_L{self.layer_id}"
+            if hidden_states.isnan().any().item() and _nk_dlnS3 not in globals():
+                globals()[_nk_dlnS3] = True
+                import sys as _sys_dln3
+                _sys_dln3.stderr.write(f"[@Moh_7596 DL_NAN_S3] layer={self.layer_id} first NaN at stage 3\n")
+                _sys_dln3.stderr.flush()
+        except Exception: pass
         hidden_states = self.post_attention_layernorm(hidden_states)
         import sys as _sys_dl
         if "DL_STAGE_4_after_post_attn_ln" not in globals():
@@ -1108,6 +1142,15 @@ class DeepseekV4DecoderLayer(nn.Module):
                 _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 4_after_post_attn_ln err] {_ee}\n")
                 _sys_dl.stderr.flush()
 
+        # @Moh_7596 per-(stage, layer) NaN-only probe
+        try:
+            _nk_dlnS4 = f"DL_NAN_S4_L{self.layer_id}"
+            if hidden_states.isnan().any().item() and _nk_dlnS4 not in globals():
+                globals()[_nk_dlnS4] = True
+                import sys as _sys_dln4
+                _sys_dln4.stderr.write(f"[@Moh_7596 DL_NAN_S4] layer={self.layer_id} first NaN at stage 4\n")
+                _sys_dln4.stderr.flush()
+        except Exception: pass
         _use_cp = self.nsa_enable_prefill_cp and nsa_use_prefill_cp(forward_batch)
         _use_tp_moe_gather = (
             not _use_cp
@@ -1139,12 +1182,64 @@ class DeepseekV4DecoderLayer(nn.Module):
             hidden_states = _a2a_scatter_chunks[r].contiguous()
             input_ids = input_ids.tensor_split(s)[r].contiguous()
             input_ids_global = input_ids_global.tensor_split(s)[r].contiguous()
+        # @Moh_7596 per-layer MoE BEFORE probe + weight check
+        try:
+            import sys as _sys_mb
+            _nk_mb = f"MOE_BEFORE_L{self.layer_id}"
+            if _nk_mb not in globals():
+                globals()[_nk_mb] = True
+                _nan_in = bool(hidden_states.isnan().any().item())
+                if _nan_in:
+                    _sys_mb.stderr.write(f"[@Moh_7596 MOE_BEFORE] layer={self.layer_id} input HAS NaN\n")
+                else:
+                    _mn = hidden_states.float().min().item(); _mx = hidden_states.float().max().item()
+                    _sys_mb.stderr.write(f"[@Moh_7596 MOE_BEFORE] layer={self.layer_id} input clean range=({_mn:.3f},{_mx:.3f})\n")
+                _moe = self.mlp
+                _wl = False
+                for _wn in ("w13_weight", "w2_weight", "gate_proj_weight", "down_proj_weight"):
+                    for _container_attr in ("experts", "expert_weights", None):
+                        try:
+                            _container = getattr(_moe, _container_attr) if _container_attr else _moe
+                            if hasattr(_container, _wn):
+                                _w = getattr(_container, _wn)
+                                if hasattr(_w, "shape"):
+                                    _sys_mb.stderr.write(f"[@Moh_7596 MOE_W_L{self.layer_id}] {_container_attr}.{_wn} shape={tuple(_w.shape)} dtype={_w.dtype} nan={_w.isnan().any().item()} inf={_w.isinf().any().item()} range=({_w.float().min().item():.4f},{_w.float().max().item():.4f})\n")
+                                    _wl = True
+                        except Exception: pass
+                # gate weight
+                try:
+                    if hasattr(_moe, "gate") and hasattr(_moe.gate, "weight"):
+                        _gw = _moe.gate.weight
+                        _sys_mb.stderr.write(f"[@Moh_7596 MOE_GATE_W_L{self.layer_id}] shape={tuple(_gw.shape)} nan={_gw.isnan().any().item()} range=({_gw.float().min().item():.4f},{_gw.float().max().item():.4f})\n")
+                except Exception: pass
+                if not _wl:
+                    _sys_mb.stderr.write(f"[@Moh_7596 MOE_W_L{self.layer_id}] no expert weights found; mlp attrs: {[a for a in dir(_moe) if not a.startswith(chr(95))][:25]}\n")
+                _sys_mb.stderr.flush()
+        except Exception as _e_mb:
+            import sys as _sys_eb
+            _sys_eb.stderr.write(f"[@Moh_7596 MOE_BEFORE error] layer={self.layer_id}: {_e_mb}\n")
+            _sys_eb.stderr.flush()
         hidden_states = self.mlp(
+        # @Moh_7596 per-layer MoE AFTER probe
             hidden_states,
             forward_batch,
             input_ids=input_ids,
             input_ids_global=input_ids_global,
         )
+        try:
+            import sys as _sys_ma
+            _nk_ma = f"MOE_AFTER_L{self.layer_id}"
+            if _nk_ma not in globals():
+                globals()[_nk_ma] = True
+                _nan_out = bool(hidden_states.isnan().any().item())
+                if _nan_out:
+                    _sys_ma.stderr.write(f"[@Moh_7596 MOE_AFTER] layer={self.layer_id} OUTPUT HAS NaN\n")
+                else:
+                    _mn = hidden_states.float().min().item()
+                    _mx = hidden_states.float().max().item()
+                    _sys_ma.stderr.write(f"[@Moh_7596 MOE_AFTER] layer={self.layer_id} OUTPUT clean range=({_mn:.3f},{_mx:.3f})\n")
+                _sys_ma.stderr.flush()
+        except Exception: pass
         import sys as _sys_dl
         if "DL_STAGE_5_after_mlp" not in globals():
             globals()["DL_STAGE_5_after_mlp"] = True
@@ -1160,6 +1255,15 @@ class DeepseekV4DecoderLayer(nn.Module):
             except Exception as _ee:
                 _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 5_after_mlp err] {_ee}\n")
                 _sys_dl.stderr.flush()
+        # @Moh_7596 per-(stage, layer) NaN-only probe
+        try:
+            _nk_dlnS5 = f"DL_NAN_S5_L{self.layer_id}"
+            if hidden_states.isnan().any().item() and _nk_dlnS5 not in globals():
+                globals()[_nk_dlnS5] = True
+                import sys as _sys_dln5
+                _sys_dln5.stderr.write(f"[@Moh_7596 DL_NAN_S5] layer={self.layer_id} first NaN at stage 5\n")
+                _sys_dln5.stderr.flush()
+        except Exception: pass
         if _use_tp_moe_gather:
             hidden_states, global_hidden_states = get_local_dp_buffer(), hidden_states
             dp_scatter(hidden_states, global_hidden_states, forward_batch)
@@ -1186,6 +1290,21 @@ class DeepseekV4DecoderLayer(nn.Module):
                 _sys_dl.stderr.write(f"[@Moh_7596 DL_STAGE 6_after_hc_post_ffn err] {_ee}\n")
                 _sys_dl.stderr.flush()
 
+        # @Moh_7596 per-(stage, layer) NaN-only probe
+        try:
+            _nk_dlnS6 = f"DL_NAN_S6_L{self.layer_id}"
+            if hidden_states.isnan().any().item() and _nk_dlnS6 not in globals():
+                globals()[_nk_dlnS6] = True
+                import sys as _sys_dln6
+                _sys_dln6.stderr.write(f"[@Moh_7596 DL_NAN_S6] layer={self.layer_id} first NaN at stage 6\n")
+                _sys_dln6.stderr.flush()
+        except Exception: pass
+        import sys as _sys_nan
+        _key_nan = f"DL_LAYER_NAN_{self.layer_id}"
+        if hidden_states.isnan().any().item() and _key_nan not in globals():
+            globals()[_key_nan] = True
+            _sys_nan.stderr.write(f"[@Moh_7596 DL_LAYER_NAN] layer_id={self.layer_id} NaN at OUTPUT\n")
+            _sys_nan.stderr.flush()
         return hidden_states
 
 
@@ -1231,7 +1350,7 @@ class DeepseekV4Model(nn.Module):
         self.hc_head_fn = nn.Parameter(
             torch.empty(hc_mult, hc_dim, dtype=torch.float32)
         )
-        self.hc_head_base = nn.Parameter(torch.empty(hc_mult, dtype=torch.float32))
+        self.hc_head_base = nn.Parameter(torch.zeros(hc_mult, dtype=torch.float32))
         self.hc_head_scale = nn.Parameter(torch.empty(1, dtype=torch.float32))
 
         self.nsa_enable_prefill_cp = is_nsa_enable_prefill_cp()

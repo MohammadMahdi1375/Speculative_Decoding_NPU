@@ -676,6 +676,16 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             except Exception as _ee:
                 _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 1 err] {_ee}\n")
                 _sys_mi.stderr.flush()
+        try:
+            import builtins as _b_inn1
+            _lid_inn1 = getattr(_b_inn1, "_MOH_CURRENT_LAYER", "unk")
+            _nk_inn1 = f"MOE_INNER_NAN_1_L{_lid_inn1}"
+            if hidden_states.isnan().any().item() and _nk_inn1 not in globals():
+                globals()[_nk_inn1] = True
+                import sys as _sys_inn1
+                _sys_inn1.stderr.write(f"[@Moh_7596 MOE_INNER_NAN_1] layer={_lid_inn1} stage 1 (hidden_states) first NaN; shape={tuple(hidden_states.shape)}\n")
+                _sys_inn1.stderr.flush()
+        except Exception: pass
         w13_bias = [layer.w13_weight_bias] if self.with_bias else None
         w2_bias = [layer.w2_weight_bias] if self.with_bias else None
 
@@ -705,6 +715,16 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             except Exception as _ee:
                 _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 2_after_gmm1_gate_up_proj err] {_ee}\n")
                 _sys_mi.stderr.flush()
+        try:
+            import builtins as _b_inn2
+            _lid_inn2 = getattr(_b_inn2, "_MOH_CURRENT_LAYER", "unk")
+            _nk_inn2 = f"MOE_INNER_NAN_2_L{_lid_inn2}"
+            if hidden_states.isnan().any().item() and _nk_inn2 not in globals():
+                globals()[_nk_inn2] = True
+                import sys as _sys_inn2
+                _sys_inn2.stderr.write(f"[@Moh_7596 MOE_INNER_NAN_2] layer={_lid_inn2} stage 2 (hidden_states) first NaN; shape={tuple(hidden_states.shape)}\n")
+                _sys_inn2.stderr.flush()
+        except Exception: pass
         # act_fn:
         if self.moe_runner_config.activation == "npu_swiglu_oai":
             from sgl_kernel_npu.activation.swiglu_oai import swiglu_oai
@@ -743,6 +763,33 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             except Exception as _ee:
                 _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 3_after_gmm2_down_proj err] {_ee}\n")
                 _sys_mi.stderr.flush()
+        try:
+            import builtins as _b_inn3
+            _lid_inn3 = getattr(_b_inn3, "_MOH_CURRENT_LAYER", "unk")
+            _nk_inn3 = f"MOE_INNER_NAN_3_L{_lid_inn3}"
+            if hidden_states.isnan().any().item() and _nk_inn3 not in globals():
+                globals()[_nk_inn3] = True
+                import sys as _sys_inn3
+                _sys_inn3.stderr.write(f"[@Moh_7596 MOE_INNER_NAN_3] layer={_lid_inn3} stage 3 (hidden_states) first NaN; shape={tuple(hidden_states.shape)}\n")
+                _sys_inn3.stderr.flush()
+        except Exception: pass
+        # @Moh_7596: mask scales where topk_ids == -1 so finalize_routing's garbage reads contribute 0
+        # Without this, the kernel multiplies non-local slot weights by uninitialized padding rows of hidden_states.
+        topk_weights = topk_weights * (topk_ids != -1).to(topk_weights.dtype)
+        try:
+            import builtins as _b_tw
+            _lid_tw = getattr(_b_tw, "_MOH_CURRENT_LAYER", "unk")
+            _nk_tw = f"MOE_TOPKW_L{_lid_tw}"
+            _twnan = topk_weights.isnan().any().item()
+            _twrowsum = topk_weights.float().sum(dim=-1)
+            _twallzero = bool((_twrowsum == 0).any().item())
+            _twrange = (topk_weights.float().min().item(), topk_weights.float().max().item()) if not _twnan else ("nan","nan")
+            if (_twnan or _twallzero) and _nk_tw not in globals():
+                globals()[_nk_tw] = True
+                import sys as _sys_tw
+                _sys_tw.stderr.write(f"[@Moh_7596 MOE_TOPKW] layer={_lid_tw} nan={_twnan} all_zero_row={_twallzero} range={_twrange} shape={tuple(topk_weights.shape)}\n")
+                _sys_tw.stderr.flush()
+        except Exception: pass
         final_hidden_states = torch.ops.npu.npu_moe_finalize_routing(
             hidden_states,
             skip1=None,
@@ -768,6 +815,16 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             except Exception as _ee:
                 _sys_mi.stderr.write(f"[@Moh_7596 MOE_INNER 4_after_finalize_routing err] {_ee}\n")
                 _sys_mi.stderr.flush()
+        try:
+            import builtins as _b_inn4
+            _lid_inn4 = getattr(_b_inn4, "_MOH_CURRENT_LAYER", "unk")
+            _nk_inn4 = f"MOE_INNER_NAN_4_L{_lid_inn4}"
+            if final_hidden_states.isnan().any().item() and _nk_inn4 not in globals():
+                globals()[_nk_inn4] = True
+                import sys as _sys_inn4
+                _sys_inn4.stderr.write(f"[@Moh_7596 MOE_INNER_NAN_4] layer={_lid_inn4} stage 4 (final_hidden_states) first NaN; shape={tuple(final_hidden_states.shape)}\n")
+                _sys_inn4.stderr.flush()
+        except Exception: pass
         return StandardCombineInput(hidden_states=final_hidden_states)
 
     def forward_tpu(self, *args, **kwargs) -> CombineInput:

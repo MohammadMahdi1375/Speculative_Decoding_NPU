@@ -761,6 +761,10 @@ class DeepseekV2MoE(nn.Module):
         input_ids: Optional[torch.Tensor] = None,
         input_ids_global: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        try:
+            import builtins as _b_set
+            _b_set._MOH_CURRENT_LAYER = self.layer_id
+        except Exception: pass
         if hasattr(self, "shared_experts") and use_intel_amx_backend(
             self.shared_experts.gate_up_proj
         ):
@@ -798,6 +802,14 @@ class DeepseekV2MoE(nn.Module):
                 except Exception as _ee:
                     _sys_moe.stderr.write(f"[@Moh_7596 MOE_STAGE 1_after_gate err] {_ee}\n")
                     _sys_moe.stderr.flush()
+            try:
+                _nk_ms1 = f"MOE_NAN_S1_L{self.layer_id}"
+                if router_logits.isnan().any().item() and _nk_ms1 not in globals():
+                    globals()[_nk_ms1] = True
+                    import sys as _sys_msn1
+                    _sys_msn1.stderr.write(f"[@Moh_7596 MOE_NAN_S1] layer={self.layer_id} stage 1 (router_logits) first NaN; shape={tuple(router_logits.shape)}\n")
+                    _sys_msn1.stderr.flush()
+            except Exception: pass
             topk_kwargs = (
                 {"input_ids": input_ids_global}
                 if getattr(self, "is_hash", False)
@@ -865,6 +877,14 @@ class DeepseekV2MoE(nn.Module):
             except Exception as _ee:
                 _sys_moe.stderr.write(f"[@Moh_7596 MOE_STAGE 2_after_experts err] {_ee}\n")
                 _sys_moe.stderr.flush()
+        try:
+            _nk_ms2 = f"MOE_NAN_S2_L{self.layer_id}"
+            if final_hidden_states.isnan().any().item() and _nk_ms2 not in globals():
+                globals()[_nk_ms2] = True
+                import sys as _sys_msn2
+                _sys_msn2.stderr.write(f"[@Moh_7596 MOE_NAN_S2] layer={self.layer_id} stage 2 (final_hidden_states) first NaN; shape={tuple(final_hidden_states.shape)}\n")
+                _sys_msn2.stderr.flush()
+        except Exception: pass
         if (
             not _is_cuda
             and not _is_musa
@@ -900,6 +920,14 @@ class DeepseekV2MoE(nn.Module):
                 _sys_moe.stderr.write(f"[@Moh_7596 MOE_STAGE 3_after_fuse err] {_ee}\n")
                 _sys_moe.stderr.flush()
 
+        try:
+            _nk_ms3 = f"MOE_NAN_S3_L{self.layer_id}"
+            if final_hidden_states.isnan().any().item() and _nk_ms3 not in globals():
+                globals()[_nk_ms3] = True
+                import sys as _sys_msn3
+                _sys_msn3.stderr.write(f"[@Moh_7596 MOE_NAN_S3] layer={self.layer_id} stage 3 (final_hidden_states) first NaN; shape={tuple(final_hidden_states.shape)}\n")
+                _sys_msn3.stderr.flush()
+        except Exception: pass
         if self.tp_size > 1 and not should_skip_post_experts_all_reduce(
             is_tp_path=True,
             use_reduce_scatter=use_reduce_scatter,
