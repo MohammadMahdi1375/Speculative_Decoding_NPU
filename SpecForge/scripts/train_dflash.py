@@ -540,7 +540,9 @@ def main():
                             print(f"[@Moh_7596] step {global_step}: non-finite grad_norm, skipping update", flush=True)
                     except Exception:
                         pass
-                optimizer.zero_grad(set_to_none=True)
+                # @Moh_7596: BF16Optimizer wrapper has no zero_grad; use
+                # nn.Module.zero_grad() directly. Functionally identical.
+                dflash_model.zero_grad(set_to_none=True)
 
             if global_step % args.log_interval == 0:
                 loss_log = loss.clone()
