@@ -68,7 +68,7 @@ MAX_GRAD_NORM=${MAX_GRAD_NORM:-1.0}
 NUM_ANCHORS=${NUM_ANCHORS:-256}
 LOSS_DECAY_GAMMA=${LOSS_DECAY_GAMMA:-7.0}
 LOG_INTERVAL=${LOG_INTERVAL:-10}
-SAVE_INTERVAL=${SAVE_INTERVAL:-500}
+SAVE_INTERVAL=${SAVE_INTERVAL:-5000}
 CHAT_TEMPLATE=${CHAT_TEMPLATE:-deepseek}
 
 # ---- HF cache ---------------------------------------------------------------
@@ -82,9 +82,10 @@ export HF_DATASETS_OFFLINE=${HF_DATASETS_OFFLINE:-1}
 export HF_HUB_DISABLE_TELEMETRY=1
 
 # ---- WandB ------------------------------------------------------------------
-export WANDB_MODE=${WANDB_MODE:-offline}
-export WANDB_PROJECT=${WANDB_PROJECT:-specforge-dsv4-flash-dflash}
-export WANDB_NAME=${WANDB_NAME:-dsv4-flash-dflash-sglang-2node}
+# export WANDB_MODE=${WANDB_MODE:-offline}
+# export WANDB_PROJECT=${WANDB_PROJECT:-specforge-dsv4-flash-dflash}
+# export WANDB_NAME=${WANDB_NAME:-dsv4-flash-dflash-sglang-2node}
+export TENSORBOARD_LOG_DIR=${TENSORBOARD_LOG_DIR:-$OUTPUT_DIR/tensorboard}
 
 # ---- Banner -----------------------------------------------------------------
 WORLD_SIZE=$((NNODES * NUM_NPUS))
@@ -140,6 +141,7 @@ torchrun \
     --loss-decay-gamma "$LOSS_DECAY_GAMMA" \
     --log-interval "$LOG_INTERVAL" \
     --save-interval "$SAVE_INTERVAL" \
-    --report-to wandb \
-    --wandb-project "$WANDB_PROJECT" \
-    --wandb-name "$WANDB_NAME"
+    --report-to tensorboard
+    # --report-to wandb \
+    # --wandb-project "$WANDB_PROJECT" \
+    # --wandb-name "$WANDB_NAME"
