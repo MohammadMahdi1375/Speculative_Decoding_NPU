@@ -526,7 +526,21 @@ def main():
             (loss / args.accumulation_steps).backward()
 
             if global_step % args.accumulation_steps == 0:
-                optimizer.step()
+                # @Moh_7596 grad-clip + non-finite skip: clip_grad_norm_ alone is
+                # not enough. If any grad is Inf in bf16, clip computes Inf*0 = NaN
+                # and poisons Adam state for every step after. Production recipe:
+                # capture grad_norm, skip optimizer.step on non-finite. zero_grad()
+                # unconditionally so the next accumulation cycle starts clean.
+                grad_norm = torch.nn.utils.clip_grad_norm_(dflash_model.parameters(), max_norm=1.0)
+                if torch.isfinite(grad_norm):
+                    optimizer.step()
+                else:
+                    try:
+                        if not dist.is_initialized() or dist.get_rank() == 0:
+                            print(f"[@Moh_7596] step {global_step}: non-finite grad_norm, skipping update", flush=True)
+                    except Exception:
+                        pass
+                optimizer.zero_grad(set_to_none=True)
 
             if global_step % args.log_interval == 0:
                 loss_log = loss.clone()

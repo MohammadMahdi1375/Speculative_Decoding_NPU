@@ -332,6 +332,14 @@ class SGLangDFlashTargetModel(DFlashTargetModel):
             reqs.append(req)
 
         hidden_states_list = self._extend(reqs)
+        # @Moh_7596 sanitize: V4-Flash frozen forward occasionally overflows on
+        # rare batches (layer 42 MLP). Frozen model -> no grad impact through V4.
+        # Replace NaN/Inf with bounded values so the draft model loss stays finite.
+        import torch as _torch_sanitize
+        hidden_states_list = [
+            _torch_sanitize.nan_to_num(_h, nan=0.0, posinf=1e3, neginf=-1e3)
+            for _h in hidden_states_list
+        ]
         # @Moh_7596 — NaN probe
         if hidden_states_list:
             _h0 = hidden_states_list[0]
