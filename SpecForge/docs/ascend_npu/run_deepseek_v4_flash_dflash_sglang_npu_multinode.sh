@@ -141,8 +141,9 @@ torchrun \
     --loss-decay-gamma "$LOSS_DECAY_GAMMA" \
     --log-interval "$LOG_INTERVAL" \
     --save-interval "$SAVE_INTERVAL" \
-    --resume \
     --report-to tensorboard
+    # --resume \
+
     # --report-to wandb \
     # --wandb-project "$WANDB_PROJECT" \
     # --wandb-name "$WANDB_NAME"
