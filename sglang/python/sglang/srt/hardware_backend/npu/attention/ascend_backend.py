@@ -1615,8 +1615,12 @@ class AscendAttnBackend(AttentionBackend):
                 sparse_mode=3,
             )
             attn_output = attn_output.view(-1, layer.tp_q_head_num * layer.v_head_dim)
+            # When num_token_non_padded_cpu is None (DFlash draft path doesn't
+            # set it), no padding is needed -- the output is already correctly
+            # sized for this batch.
             if (
                 not self.graph_mode
+                and forward_batch.num_token_non_padded_cpu is not None
                 and forward_batch.num_token_non_padded_cpu != num_token_padding
             ):
                 attn_output = torch.cat(
