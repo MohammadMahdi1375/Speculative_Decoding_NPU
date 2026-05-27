@@ -3423,6 +3423,23 @@ class Scheduler(
             ret["avg_spec_accept_length"] = (
                 self.spec_total_num_accepted_tokens / self.spec_total_num_forward_ct
             )
+        # DFlash timing instrumentation (cumulative since server start, rank-local)
+        _dw = getattr(self, "draft_worker", None)
+        if _dw is not None and hasattr(_dw, "_dflash_step_count"):
+            _n = getattr(_dw, "_dflash_step_count", 0)
+            if _n > 0:
+                _pd = getattr(_dw, "_dflash_pure_draft_total", 0.0)
+                _pv = getattr(_dw, "_dflash_verify_time_total", 0.0)
+                _ot = getattr(_dw, "_dflash_other_total", 0.0)
+                ret["dflash_timings"] = {
+                    "step_count": _n,
+                    "pure_draft_total_s": _pd,
+                    "pure_verify_total_s": _pv,
+                    "other_total_s": _ot,
+                    "pure_draft_avg_ms": 1000.0 * _pd / _n,
+                    "pure_verify_avg_ms": 1000.0 * _pv / _n,
+                    "other_avg_ms": 1000.0 * _ot / _n,
+                }
 
         if RECORD_STEP_TIME:
             ret["step_time_dict"] = self.step_time_dict

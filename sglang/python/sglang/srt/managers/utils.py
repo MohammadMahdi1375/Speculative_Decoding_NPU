@@ -53,6 +53,11 @@ class GenerationBatchResult:
 
     # metrics
     expert_distribution_metrics: Optional[ExpertDistributionMetrics] = None
+    # DFlash timing instrumentation (cumulative on the producing worker)
+    dflash_pure_draft_total_s: Optional[float] = None
+    dflash_pure_verify_total_s: Optional[float] = None
+    dflash_other_total_s: Optional[float] = None
+    dflash_step_count: Optional[int] = None
 
     def copy_to_cpu(self, return_logprob: bool):
         """Copy tensors to CPU in overlap scheduling.

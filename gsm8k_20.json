@@ -1,0 +1,50 @@
+{
+  "dataset": "gsm8k",
+  "n_samples": 5,
+  "wall_clock_s": 66.80472764700062,
+  "throughput_tok_per_s": 129.0477531104352,
+  "avg_latency_s": 13.353607510199799,
+  "median_latency_s": 9.029895682000642,
+  "results": [
+    {
+      "id": 2,
+      "prompt_tokens": 57,
+      "completion_tokens": 2048,
+      "latency_s": 9.029895682000642,
+      "error": null,
+      "output": "  (Profit is calculated as selling price minus cost price)\n\nTo determine Josh's profit, we need to follow these steps:\n\n1. **Calculate the original value of the house after repairs:**\n   - The origina"
+    },
+    {
+      "id": 3,
+      "prompt_tokens": 35,
+      "completion_tokens": 2048,
+      "latency_s": 5.933003930000268,
+      "error": null,
+      "output": " To find the total meters James runs in a week, we need to calculate the distance for each sprint and then multiply by the number of sprints he does in a week.\n\nEach sprint is 60 meters, and he runs 3"
+    },
+    {
+      "id": 4,
+      "prompt_tokens": 111,
+      "completion_tokens": 429,
+      "latency_s": 4.6069785009985935,
+      "error": null,
+      "output": " To solve this problem, we need to determine how many cups of feed Wendi needs to give her chickens in the final meal of the day. Let's break down the information given and work step by step.\n\n---\n\n##"
+    },
+    {
+      "id": 5,
+      "prompt_tokens": 56,
+      "completion_tokens": 2048,
+      "latency_s": 21.762770645000273,
+      "error": null,
+      "output": " Let's think. To solve this problem, we need to calculate the total cost of 16 glasses, considering that every second glass costs 60% of the original price. Let's break it down step by step.\n\nFirst, l"
+    },
+    {
+      "id": 6,
+      "prompt_tokens": 42,
+      "completion_tokens": 2048,
+      "latency_s": 25.43538879299922,
+      "error": null,
+      "output": " Let's think first.\nOkay, let me try to figure out this problem step by step. So, the question is about the number of sheep in three different cities: Toulouse, Charleston, and Seattle. The problem st"
+    }
+  ]
+}

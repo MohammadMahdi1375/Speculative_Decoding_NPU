@@ -657,9 +657,21 @@ class DFlashWorker:
             )
 
             with torch.inference_mode():
+                import time as _t_mod
+                import torch as _torch_mod
+                try:
+                    _torch_mod.npu.synchronize()
+                except (AttributeError, RuntimeError):
+                    pass
+                self._last_pure_draft_t0 = _t_mod.perf_counter()
                 draft_logits_output = self.draft_model_runner.forward(
                     forward_batch
                 ).logits_output
+                try:
+                    _torch_mod.npu.synchronize()
+                except (AttributeError, RuntimeError):
+                    pass
+                self._last_pure_draft_t1 = _t_mod.perf_counter()
         finally:
             # Drop the speculative block from the shared allocator (EAGLE3-style).
             allocator.restore_state(token_to_kv_pool_state_backup)
@@ -1190,7 +1202,10 @@ class DFlashWorker:
                 "This usually means the request did not complete the prefill stage."
             )
 
+        import time as _time_mod
+        _draft_t0 = _time_mod.perf_counter()
         self._prepare_for_speculative_decoding(batch, draft_input)
+        _draft_elapsed = _time_mod.perf_counter() - _draft_t0
 
         model_worker_batch = batch.get_model_worker_batch()
         assert model_worker_batch.forward_mode.is_target_verify()
@@ -1204,9 +1219,58 @@ class DFlashWorker:
             batch.seq_lens.clone() if need_mamba_verify_commit else None
         )
 
+        _verify_t0 = _time_mod.perf_counter()
         batch_result = self.target_worker.forward_batch_generation(
             model_worker_batch, is_verify=True, **kwargs
         )
+        _verify_elapsed = _time_mod.perf_counter() - _verify_t0
+
+        # Accumulate worker-wide totals
+        if not hasattr(self, '_dflash_draft_time_total'):
+            self._dflash_draft_time_total = 0.0
+            self._dflash_verify_time_total = 0.0
+            self._dflash_step_count = 0
+        self._dflash_draft_time_total += _draft_elapsed
+        self._dflash_verify_time_total += _verify_elapsed
+        self._dflash_step_count += 1
+        # Pure draft = just self.draft_model_runner.forward(...) inside _prepare
+        # Pure verify = self.target_worker.forward_batch_generation(...)
+        # Other = (prep total) - pure draft = KV ops, embedding, alloc, etc.
+        _pure_draft_this_step = 0.0
+        if hasattr(self, '_last_pure_draft_t0') and hasattr(self, '_last_pure_draft_t1'):
+            _pure_draft_this_step = self._last_pure_draft_t1 - self._last_pure_draft_t0
+        if not hasattr(self, '_dflash_pure_draft_total'):
+            self._dflash_pure_draft_total = 0.0
+            self._dflash_other_total = 0.0
+        self._dflash_pure_draft_total += _pure_draft_this_step
+        _other_this_step = max(0.0, _draft_elapsed - _pure_draft_this_step)
+        self._dflash_other_total += _other_this_step
+
+        if self._dflash_step_count % 10 == 0:
+            _n = self._dflash_step_count
+            _vt = self._dflash_verify_time_total
+            _pd = self._dflash_pure_draft_total
+            _other = self._dflash_other_total
+            _rank = getattr(self, 'tp_rank', 0)
+            _grand = _pd + _vt + _other
+            _line = (
+                f"[DFLASH TIMING rank={_rank}] step={_n} "
+                f"pure_draft_total={_pd:.3f}s avg={1000*_pd/_n:.2f}ms | "
+                f"pure_verify_total={_vt:.3f}s avg={1000*_vt/_n:.2f}ms | "
+                f"other_total={_other:.3f}s avg={1000*_other/_n:.2f}ms | "
+                f"pure_draft_frac={_pd/_grand:.2%} | "
+                f"pure_verify_frac={_vt/_grand:.2%} | "
+                f"other_frac={_other/_grand:.2%}\n"
+            )
+            import os as _os
+            _timing_path = _os.environ.get(
+                'DFLASH_TIMING_LOG', '/tmp/dflash_timing_worker.log'
+            )
+            try:
+                with open(_timing_path, 'a') as _tf:
+                    _tf.write(_line)
+            except Exception:
+                pass
         logits_output, can_run_cuda_graph = (
             batch_result.logits_output,
             batch_result.can_run_cuda_graph,
