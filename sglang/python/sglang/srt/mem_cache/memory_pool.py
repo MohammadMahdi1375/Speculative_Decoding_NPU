@@ -910,14 +910,16 @@ class MHATokenToKVPool(KVCache):
                     for _ in range(self.layer_num)
                 ]
 
+        # NPU's aclnnCat does not support DT_UINT64; use int64 instead.
+        # Pointer values fit in int64 (max 2^63 - 1) so this is safe.
         self.k_data_ptrs = torch.tensor(
             [x.data_ptr() for x in self.k_buffer],
-            dtype=torch.uint64,
+            dtype=torch.int64,
             device=self.device,
         )
         self.v_data_ptrs = torch.tensor(
             [x.data_ptr() for x in self.v_buffer],
-            dtype=torch.uint64,
+            dtype=torch.int64,
             device=self.device,
         )
         self.data_ptrs = torch.cat([self.k_data_ptrs, self.v_data_ptrs], dim=0)
