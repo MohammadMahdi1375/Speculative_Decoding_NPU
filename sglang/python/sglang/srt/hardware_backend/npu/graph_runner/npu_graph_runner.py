@@ -199,7 +199,13 @@ class NPUGraphRunner(CudaGraphRunner):
                 full_logits = output.full_logits[: self.raw_num_token]
             else:
                 full_logits = None
-                next_token_logits = output.next_token_logits[: self.raw_num_token]
+                # DFlash draft path returns hidden_states only; next_token_logits
+                # is None. Guard accordingly so we can still slice hidden_states.
+                next_token_logits = (
+                    output.next_token_logits[: self.raw_num_token]
+                    if output.next_token_logits is not None
+                    else None
+                )
             return LogitsProcessorOutput(
                 next_token_logits=next_token_logits,
                 full_logits=full_logits,
