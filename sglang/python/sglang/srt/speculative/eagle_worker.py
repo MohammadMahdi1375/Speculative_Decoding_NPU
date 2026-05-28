@@ -718,6 +718,13 @@ class EAGLEWorker(TpModelWorker):
         )
 
     def draft(self, batch: ScheduleBatch):
+        import time as _t_mod
+        import torch as _torch_mod
+        try:
+            _torch_mod.npu.synchronize()
+        except (AttributeError, RuntimeError):
+            pass
+        self._eagle_draft_t0 = _t_mod.perf_counter()
         # Parse args
         if batch.forward_mode.is_idle():
             self._draft_preprocess_idle(batch)
@@ -784,6 +791,13 @@ class EAGLEWorker(TpModelWorker):
             self.speculative_num_draft_tokens,
         )
 
+        try:
+            _torch_mod.npu.synchronize()
+        except (AttributeError, RuntimeError):
+            pass
+        if not hasattr(self, '_eagle_pure_draft_total'):
+            self._eagle_pure_draft_total = 0.0
+        self._eagle_pure_draft_total += _t_mod.perf_counter() - self._eagle_draft_t0
         return EagleVerifyInput(
             draft_token=draft_tokens,
             custom_mask=tree_mask,
@@ -799,6 +813,15 @@ class EAGLEWorker(TpModelWorker):
             seq_lens_sum=forward_batch.seq_lens_sum,
             seq_lens_cpu=forward_batch.seq_lens_cpu,
         )
+        try:
+            _torch_mod.npu.synchronize()
+        except (AttributeError, RuntimeError):
+            pass
+        if not hasattr(self, '_eagle_pure_draft_total'):
+            self._eagle_pure_draft_total = 0.0
+        self._eagle_pure_draft_total += _t_mod.perf_counter() - self._eagle_draft_t0
+
+
 
     def draft_forward(self, forward_batch: ForwardBatch):
         # Parse args
@@ -885,6 +908,13 @@ class EAGLEWorker(TpModelWorker):
         pass
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
+        import time as _t_mod
+        import torch as _torch_mod
+        try:
+            _torch_mod.npu.synchronize()
+        except (AttributeError, RuntimeError):
+            pass
+        self._eagle_verify_t0 = _t_mod.perf_counter()
         seq_lens_pre_verify = batch.seq_lens.clone()
         spec_info.prepare_for_verify(batch, self.page_size)
         spec_info.num_tokens_per_req = self.speculative_num_steps + 1
@@ -973,7 +1003,18 @@ class EAGLEWorker(TpModelWorker):
         )
         batch.spec_info = res.draft_input
 
+        try:
+            _torch_mod.npu.synchronize()
+        except (AttributeError, RuntimeError):
+            pass
+        if not hasattr(self, '_eagle_pure_verify_total'):
+            self._eagle_pure_verify_total = 0.0
+            self._eagle_step_count = 0
+        self._eagle_pure_verify_total += _t_mod.perf_counter() - self._eagle_verify_t0
+        self._eagle_step_count += 1
         return logits_output, res, model_worker_batch, can_run_cuda_graph
+
+
 
     def _mamba_verify_update(
         self,

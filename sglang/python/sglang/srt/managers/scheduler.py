@@ -3440,6 +3440,19 @@ class Scheduler(
                     "pure_verify_avg_ms": 1000.0 * _pv / _n,
                     "other_avg_ms": 1000.0 * _ot / _n,
                 }
+        # EAGLE timing instrumentation (similar shape, no 'other' bucket)
+        if _dw is not None and hasattr(_dw, "_eagle_step_count"):
+            _n = getattr(_dw, "_eagle_step_count", 0)
+            if _n > 0:
+                _pd = getattr(_dw, "_eagle_pure_draft_total", 0.0)
+                _pv = getattr(_dw, "_eagle_pure_verify_total", 0.0)
+                ret["eagle_timings"] = {
+                    "step_count": _n,
+                    "pure_draft_total_s": _pd,
+                    "pure_verify_total_s": _pv,
+                    "pure_draft_avg_ms": 1000.0 * _pd / _n,
+                    "pure_verify_avg_ms": 1000.0 * _pv / _n,
+                }
 
         if RECORD_STEP_TIME:
             ret["step_time_dict"] = self.step_time_dict

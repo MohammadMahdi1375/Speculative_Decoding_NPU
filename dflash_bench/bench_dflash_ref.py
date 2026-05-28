@@ -69,20 +69,28 @@ def send_one(base_url, prompt, max_new_tokens, temperature, top_p, top_k, timeou
     return out if isinstance(out, dict) else out[0]
 
 
-def get_dflash_timings(base_url):
-    """Returns rank-0 dflash_timings dict from /server_info, or None."""
+def get_spec_timings(base_url):
+    """Returns (algo_name, timings_dict) from /server_info, or (None, None).
+    Checks for dflash_timings or eagle_timings, whichever is present."""
     try:
         r = requests.get(f"{base_url}/server_info", timeout=10)
         r.raise_for_status()
         d = r.json()
         for state in d.get("internal_states", []):
-            t = state.get("dflash_timings")
-            if t:
-                return t  # rank-0 (first one)
-        return None
+            for algo in ("dflash", "eagle"):
+                t = state.get(f"{algo}_timings")
+                if t:
+                    return algo, t
+        return None, None
     except Exception as e:
-        print(f"WARN: could not fetch dflash_timings: {e}")
-        return None
+        print(f"WARN: could not fetch spec timings: {e}")
+        return None, None
+
+
+def get_dflash_timings(base_url):
+    """Backward-compat wrapper."""
+    _, t = get_spec_timings(base_url)
+    return t
 
 
 def main():
@@ -123,12 +131,14 @@ def main():
         prompts.append(chat_text)
 
     # Snapshot timings BEFORE
-    t_before = get_dflash_timings(args.base_url)
+    algo_before, t_before = get_spec_timings(args.base_url)
     if t_before:
-        print(f"Timings BEFORE: step={t_before['step_count']} "
-              f"draft={t_before['pure_draft_total_s']:.2f}s "
-              f"verify={t_before['pure_verify_total_s']:.2f}s "
-              f"other={t_before['other_total_s']:.2f}s")
+        _parts = [f"step={t_before['step_count']}",
+                  f"draft={t_before.get('pure_draft_total_s', 0.0):.2f}s",
+                  f"verify={t_before.get('pure_verify_total_s', 0.0):.2f}s"]
+        if 'other_total_s' in t_before:
+            _parts.append(f"other={t_before['other_total_s']:.2f}s")
+        print(f"Timings BEFORE: {' '.join(_parts)}")
 
     try:
         requests.get(f"{args.base_url}/flush_cache", timeout=60).raise_for_status()
@@ -181,7 +191,7 @@ def main():
                 except (TypeError, ValueError): pass
 
     elapsed = time.perf_counter() - start
-    t_after = get_dflash_timings(args.base_url)
+    algo_after, t_after = get_spec_timings(args.base_url)
 
     print()
     print("=" * 60)
@@ -215,13 +225,14 @@ def main():
         d_step = t_after["step_count"] - t_before["step_count"]
         d_pd = t_after["pure_draft_total_s"] - t_before["pure_draft_total_s"]
         d_pv = t_after["pure_verify_total_s"] - t_before["pure_verify_total_s"]
-        d_oth = t_after["other_total_s"] - t_before["other_total_s"]
+        d_oth = t_after.get("other_total_s", 0.0) - t_before.get("other_total_s", 0.0)
         if d_step > 0:
-            print(f"=== Timing Breakdown (delta over this run) ===")
+            print(f"=== Timing Breakdown — {algo_after or algo_before or 'spec'} (delta over this run) ===")
             print(f"   Verify steps:       {d_step}")
             print(f"   Pure draft total:   {d_pd:.3f} s  (avg {1000*d_pd/d_step:.2f} ms/step)")
             print(f"   Pure verify total:  {d_pv:.3f} s  (avg {1000*d_pv/d_step:.2f} ms/step)")
-            print(f"   Other (prep/etc):   {d_oth:.3f} s  (avg {1000*d_oth/d_step:.2f} ms/step)")
+            if d_oth > 0:
+                print(f"   Other (prep/etc):   {d_oth:.3f} s  (avg {1000*d_oth/d_step:.2f} ms/step)")
             total = d_pd + d_pv + d_oth
             if total > 0:
                 print(f"   Pure draft frac:    {100*d_pd/total:.1f}%")
@@ -230,14 +241,15 @@ def main():
     elif t_after:
         n = t_after["step_count"]
         if n > 0:
-            print(f"=== Timing Breakdown (cumulative since server start) ===")
+            print(f"=== Timing Breakdown — {algo_after} (cumulative since server start) ===")
             print(f"   Verify steps:       {n}")
             print(f"   Pure draft total:   {t_after['pure_draft_total_s']:.3f} s  "
                   f"(avg {t_after['pure_draft_avg_ms']:.2f} ms/step)")
             print(f"   Pure verify total:  {t_after['pure_verify_total_s']:.3f} s  "
                   f"(avg {t_after['pure_verify_avg_ms']:.2f} ms/step)")
-            print(f"   Other (prep/etc):   {t_after['other_total_s']:.3f} s  "
-                  f"(avg {t_after['other_avg_ms']:.2f} ms/step)")
+            if 'other_total_s' in t_after:
+                print(f"   Other (prep/etc):   {t_after['other_total_s']:.3f} s  "
+                      f"(avg {t_after['other_avg_ms']:.2f} ms/step)")
     else:
         print("NOTE: no dflash_timings returned by /server_info")
         print("      (Server may not have the scheduler.py patch applied)")
