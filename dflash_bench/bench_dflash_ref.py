@@ -50,23 +50,159 @@ def load_data(name, n):
     return items if n is None else items[:n]
 
 
+def compute_flops_per_token(model_path, avg_seq_len=512):
+    """Exact FLOPs per decoded token (GQA + SwiGLU + attention + lm_head)."""
+    from transformers import AutoConfig
+    c = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    h = c.hidden_size
+    L = c.num_hidden_layers
+    n_heads = c.num_attention_heads
+    n_kv = getattr(c, "num_key_value_heads", n_heads)
+    d_ff = c.intermediate_size
+    V = c.vocab_size
+    head_dim = h // n_heads
+    h_kv = head_dim * n_kv
+
+    flops_q   = 2 * h * h
+    flops_k   = 2 * h * h_kv
+    flops_v   = 2 * h * h_kv
+    flops_o   = 2 * h * h
+    flops_ffn = 2 * h * d_ff * 3       # SwiGLU: gate, up, down
+    flops_attn = 4 * h * avg_seq_len   # QK^T + softmax-V
+    per_layer = flops_q + flops_k + flops_v + flops_o + flops_ffn + flops_attn
+    flops_layers = L * per_layer
+    flops_lm_head = 2 * h * V
+    total = flops_layers + flops_lm_head
+
+    breakdown = {
+        "hidden_size": h,
+        "layers": L,
+        "n_heads": n_heads,
+        "n_kv_heads": n_kv,
+        "head_dim": head_dim,
+        "intermediate_size": d_ff,
+        "vocab_size": V,
+        "avg_seq_len": avg_seq_len,
+        "per_layer_FLOPs": per_layer,
+        "all_layers_FLOPs": flops_layers,
+        "lm_head_FLOPs": flops_lm_head,
+        "total_FLOPs_per_token": total,
+    }
+    return total, breakdown
+
+
+def compute_mfu(aggregate_throughput_tok_s, flops_per_token,
+                peak_tflops_per_chip, tp):
+    """MFU = F_t * aggregate_throughput / peak.
+
+    Works for any concurrency. At concurrency=1, this equals F_t / ITL / peak.
+    At higher concurrency, aggregate throughput captures all concurrent streams,
+    while per-stream ITL would undercount by the concurrency factor.
+
+    Args:
+        aggregate_throughput_tok_s: total output tokens/sec across all streams
+        flops_per_token: target FLOPs per accepted output token
+        peak_tflops_per_chip: hardware peak BF16 TFLOPS per chip
+        tp: tensor parallel size
+
+    Returns:
+        MFU as a fraction (0-1).
+    """
+    peak_flops = peak_tflops_per_chip * 1e12 * tp
+    flops_per_sec = flops_per_token * aggregate_throughput_tok_s
+    return flops_per_sec / peak_flops
+
+
 def send_one(base_url, prompt, max_new_tokens, temperature, top_p, top_k, timeout):
-    resp = requests.post(
-        f"{base_url}/generate",
-        json={
-            "text": prompt,
-            "sampling_params": {
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k,
-                "max_new_tokens": max_new_tokens,
-            },
+    """Streaming request to /generate. Captures per-token timing the same way
+    sglang.bench_serving does: each SSE chunk records a timestamp, and per-token
+    ITL = chunk_gap / num_new_tokens (since multiple tokens can land per chunk
+    when spec decoding accepts a block).
+
+    Returns dict with keys:
+        text, meta_info, e2e_latency, ttft, itls (list, ms), tpot_ms, output_len
+    """
+    import json as _json
+    payload = {
+        "text": prompt,
+        "sampling_params": {
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "max_new_tokens": max_new_tokens,
         },
+        "stream": True,
+    }
+
+    st = time.perf_counter()
+    ttft = 0.0
+    most_recent_ts = st
+    last_output_len = 0
+    itls = []
+    final_data = None
+
+    with requests.post(
+        f"{base_url}/generate",
+        json=payload,
         timeout=timeout,
-    )
-    resp.raise_for_status()
-    out = resp.json()
-    return out if isinstance(out, dict) else out[0]
+        stream=True,
+    ) as resp:
+        resp.raise_for_status()
+        for raw_line in resp.iter_lines(decode_unicode=True):
+            if not raw_line:
+                continue
+            line = raw_line.strip()
+            if line.startswith("data:"):
+                line = line[5:].lstrip()
+            if line == "[DONE]":
+                continue
+            try:
+                data = _json.loads(line)
+            except Exception:
+                continue
+            if "text" not in data or "meta_info" not in data:
+                continue
+            output_len = int(data["meta_info"].get("completion_tokens", 0))
+            ts = time.perf_counter()
+            if ttft == 0.0 and output_len > 0:
+                ttft = ts - st
+            else:
+                num_new = output_len - last_output_len
+                if num_new <= 0:
+                    continue
+                chunk_gap = ts - most_recent_ts
+                per_token_itl = chunk_gap / num_new
+                itls.extend([per_token_itl] * num_new)
+            most_recent_ts = ts
+            last_output_len = output_len
+            final_data = data
+
+    e2e = time.perf_counter() - st
+    output_len = (final_data or {}).get("meta_info", {}).get("completion_tokens", 0)
+    tpot = ((e2e - ttft) / max(1, output_len - 1)) if output_len > 1 else 0.0
+
+    if final_data is None:
+        # Server returned nothing useful — surface an empty record
+        return {
+            "text": "",
+            "meta_info": {},
+            "e2e_latency": e2e,
+            "ttft": ttft,
+            "itls": [],
+            "tpot_ms": 0.0,
+            "output_len": 0,
+        }
+
+    out = {
+        "text": final_data.get("text", ""),
+        "meta_info": final_data.get("meta_info", {}),
+        "e2e_latency": e2e,
+        "ttft": ttft,
+        "itls": [x * 1000.0 for x in itls],  # ms
+        "tpot_ms": tpot * 1000.0,
+        "output_len": output_len,
+    }
+    return out
 
 
 def get_spec_timings(base_url):
@@ -107,6 +243,12 @@ def main():
     ap.add_argument("--top-k", type=int, default=1)
     ap.add_argument("--enable-thinking", action="store_true")
     ap.add_argument("--timeout-s", type=int, default=3600)
+    ap.add_argument("--peak-tflops-per-chip", type=float, default=320.0,
+                    help="Peak BF16 TFLOPS per chip. Ascend 910B = 320 (BF16 spec).")
+    ap.add_argument("--tp", type=int, default=8,
+                    help="Tensor parallel size for aggregate peak FLOPS calc.")
+    ap.add_argument("--avg-seq-len", type=int, default=512,
+                    help="Average seq len for attention FLOPs. ~1024 reasonable for GSM8K outputs.")
     args = ap.parse_args()
 
     print(f"Loading tokenizer for {args.model}...")
@@ -166,6 +308,9 @@ def main():
     proposed_drafts_sum = 0
     verify_ct_sum = 0
     e2e_latencies = []
+    all_itls = []     # per-token ITL in ms, aggregated across requests
+    all_ttfts = []    # per-request TTFT in ms
+    all_tpots = []    # per-request TPOT in ms
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
         futures = {pool.submit(
@@ -180,6 +325,15 @@ def main():
             verify_ct_sum += int(meta.get("spec_verify_ct", 0))
             accepted_drafts_sum += int(meta.get("spec_accepted_drafts", 0))
             proposed_drafts_sum += int(meta.get("spec_proposed_drafts", 0))
+            # Streaming-derived latency metrics
+            req_itls = out.get("itls") or []
+            all_itls.extend(req_itls)
+            ttft_ms = (out.get("ttft", 0.0) or 0.0) * 1000.0
+            if ttft_ms > 0:
+                all_ttfts.append(ttft_ms)
+            tpot_ms = out.get("tpot_ms", 0.0)
+            if tpot_ms > 0:
+                all_tpots.append(tpot_ms)
             if "e2e_latency" in meta:
                 try: e2e_latencies.append(float(meta["e2e_latency"]))
                 except (TypeError, ValueError): pass
@@ -219,6 +373,84 @@ def main():
         print(f"   E2E latency (min):  {min(e2e_latencies):.2f} s")
         print(f"   E2E latency (max):  {max(e2e_latencies):.2f} s")
     print()
+
+    # Streaming-derived per-token metrics (same algorithm as sglang.bench_serving)
+    if all_itls:
+        import math
+        s_itls = sorted(all_itls)
+        def _pct(arr, q):
+            if not arr:
+                return 0.0
+            idx = min(len(arr) - 1, max(0, int(math.ceil(q * len(arr))) - 1))
+            return arr[idx]
+        print(f"--- Per-token latency (streaming, {len(all_itls)} samples) ---")
+        print(f"   Mean TTFT (ms):     {statistics.mean(all_ttfts):.2f}" if all_ttfts else "")
+        print(f"   Mean ITL (ms):      {statistics.mean(all_itls):.2f}")
+        print(f"   Median ITL (ms):    {statistics.median(all_itls):.2f}")
+        print(f"   P95 ITL (ms):       {_pct(s_itls, 0.95):.2f}")
+        print(f"   P99 ITL (ms):       {_pct(s_itls, 0.99):.2f}")
+        print(f"   Max ITL (ms):       {max(all_itls):.2f}")
+        if all_tpots:
+            print(f"   Mean TPOT (ms):     {statistics.mean(all_tpots):.2f}")
+        print()
+
+        # === MFU computation using exact target FLOPs ===
+        try:
+            flops_per_token, bd = compute_flops_per_token(
+                args.model, avg_seq_len=args.avg_seq_len,
+            )
+            mean_itl_s = statistics.mean(all_itls) / 1000.0
+            median_itl_s = statistics.median(all_itls) / 1000.0
+            # tau = accepted tokens per spec round (incl. bonus).
+            if accept_lengths:
+                tau = statistics.mean(accept_lengths) + 1.0  # +1 bonus
+            else:
+                tau = 1.0
+            # round_time = ITL@gamma = wall-clock per spec round per stream.
+            # Note: at high concurrency, per-stream ITL is inflated by concurrency.
+            round_time_mean_s   = mean_itl_s   * tau
+            round_time_median_s = median_itl_s * tau
+            # Aggregate throughput = total tokens / wall clock — works at ANY concurrency.
+            aggregate_throughput = total_tokens / elapsed
+            # MFU using aggregate throughput (correct at any concurrency)
+            mfu_aggregate = compute_mfu(aggregate_throughput, flops_per_token,
+                                        args.peak_tflops_per_chip, args.tp)
+            # MFU using per-stream ITL (only correct at concurrency=1)
+            # Kept for backward comparison; flag as wrong at high concurrency.
+            peak_flops = args.peak_tflops_per_chip * 1e12 * args.tp
+            mfu_mean = (flops_per_token / mean_itl_s) / peak_flops
+            mfu_median = (flops_per_token / median_itl_s) / peak_flops
+            peak_total = args.peak_tflops_per_chip * args.tp
+            bd_h     = bd["hidden_size"]
+            bd_L     = bd["layers"]
+            bd_V     = bd["vocab_size"]
+            bd_kv    = bd["n_kv_heads"]
+            bd_ff    = bd["intermediate_size"]
+            bd_seq   = bd["avg_seq_len"]
+            bd_lm    = bd["lm_head_FLOPs"]
+            bd_total = bd["total_FLOPs_per_token"]
+            lm_frac  = 100.0 * bd_lm / bd_total
+            print(f"--- MFU ---")
+            print(f"   Target model:       {args.model}")
+            print(f"   F_t (FLOPs/token):  {flops_per_token/1e9:.2f} GFLOPs/token")
+            print(f"   tau (accept+bonus): {tau:.3f}")
+            print(f"   Aggregate throughput: {aggregate_throughput:.2f} tok/s")
+            print(f"   round_time mean (per-stream): {round_time_mean_s*1000:.2f} ms")
+            print(f"   Breakdown:")
+            print(f"     hidden:           {bd_h}")
+            print(f"     layers:           {bd_L}")
+            print(f"     vocab:            {bd_V}")
+            print(f"     n_kv_heads:       {bd_kv}  (GQA)")
+            print(f"     intermediate:     {bd_ff}")
+            print(f"     attention @ seq:  {bd_seq}")
+            print(f"     LM head FLOPs:    {bd_lm/1e9:.2f} G ({lm_frac:.1f}%)")
+            print(f"   Peak FLOPS total:   {peak_total:.0f} TFLOPS (TP={args.tp} x {args.peak_tflops_per_chip})")
+            print(f"   ** MFU (aggregate throughput): {100*mfu_aggregate:.4f}% **   <- USE THIS")
+            print(f"   ** MFU (from per-stream ITL):  {100*mfu_mean:.4f}% **        <- only valid at conc=1")
+            print(f"   ** MFU (from median ITL):      {100*mfu_median:.4f}% **       <- only valid at conc=1")
+        except Exception as e:
+            print(f"   MFU computation failed: {e}")
+        print()
 
     # Timing breakdown via HTTP
     if t_before and t_after:
