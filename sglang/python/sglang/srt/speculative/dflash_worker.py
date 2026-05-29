@@ -1203,8 +1203,20 @@ class DFlashWorker:
             )
 
         import time as _time_mod
+        import torch as _torch_mod
+        # Synchronize BEFORE starting timer so we don't measure leftover NPU work
+        # from the previous spec round. Without this, "Other" balloons at high
+        # concurrency because the NPU queue is deeper.
+        try:
+            _torch_mod.npu.synchronize()
+        except (AttributeError, RuntimeError):
+            pass
         _draft_t0 = _time_mod.perf_counter()
         self._prepare_for_speculative_decoding(batch, draft_input)
+        try:
+            _torch_mod.npu.synchronize()
+        except (AttributeError, RuntimeError):
+            pass
         _draft_elapsed = _time_mod.perf_counter() - _draft_t0
 
         model_worker_batch = batch.get_model_worker_batch()
