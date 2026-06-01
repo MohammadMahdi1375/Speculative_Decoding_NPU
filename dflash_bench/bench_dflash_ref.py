@@ -110,6 +110,7 @@ def compute_mfu(aggregate_throughput_tok_s, flops_per_token,
     """
     peak_flops = peak_tflops_per_chip * 1e12 * tp
     flops_per_sec = flops_per_token * aggregate_throughput_tok_s
+    print(f"####################  flops_per_sec: {flops_per_token} ####################")
     return flops_per_sec / peak_flops
 
 
@@ -366,7 +367,7 @@ def main():
     if proposed_drafts_sum > 0:
         print(f"   Overall accept rate: {100*accepted_drafts_sum/proposed_drafts_sum:.2f}%  "
               f"({accepted_drafts_sum}/{proposed_drafts_sum} drafts)")
-    if verify_ct_sum > 0:
+    if verify_ct_sum:
         print(f"   Verify ct sum:      {verify_ct_sum}")
     if e2e_latencies:
         print(f"   E2E latency (mean): {statistics.mean(e2e_latencies):.2f} s")
